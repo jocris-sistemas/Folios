@@ -127,12 +127,12 @@ function renderLogin(msg) {
   $('#app').innerHTML = `<div class="login"><div class="card"><div class="big">Folios</div><div class="mut">Egresos e ingresos</div>
   ${msg ? `<div class="msg err">${esc(msg)}</div>` : ''}
   <form id="fl"><label>Correo</label><input id="lm" type="email" autocomplete="username" required><label>Contraseña</label><input id="lp" type="password" autocomplete="current-password" required>
-  <div style="margin-top:14px"><button class="btn" style="width:100%" id="lb">Entrar</button></div></form>
-  <p class="mut" style="font-size:12.5px">Es el mismo usuario y contraseña de la app de cheques.</p></div></div>`;
+  <div style="margin-top:14px"><button class="btn" style="width:100%" id="lb">Iniciar sesión</button></div></form>
+  <p class="mut" style="font-size:12.5px">Se utilizan las mismas credenciales del sistema de cheques.</p></div></div>`;
   $('#fl').onsubmit = async e => {
-    e.preventDefault(); const b = $('#lb'); b.disabled = true; b.textContent = 'Entrando…';
+    e.preventDefault(); const b = $('#lb'); b.disabled = true; b.textContent = 'Iniciando sesión…';
     const { error } = await sb.auth.signInWithPassword({ email: $('#lm').value.trim().toLowerCase(), password: $('#lp').value });
-    if (error) return renderLogin(/invalid/i.test(error.message) ? 'Correo o contraseña incorrectos.' : 'No se pudo entrar: ' + error.message);
+    if (error) return renderLogin(/invalid/i.test(error.message) ? 'Correo o contraseña incorrectos.' : 'No fue posible iniciar sesión: ' + error.message);
     boot();
   };
 }
@@ -141,10 +141,10 @@ async function boot() {
   if (!session) return renderLogin();
   const { data: p, error } = await sb.from('perfiles').select('*').eq('id', session.user.id).maybeSingle();
   if (error) { $('#app').innerHTML = '<div class="login"><div class="msg err">Sin conexión con el servidor.</div></div>'; return; }
-  if (!p || !p.activo) { await sb.auth.signOut(); return renderLogin('Tu usuario no está activo. Avísale a Pedro.'); }
+  if (!p || !p.activo) { await sb.auth.signOut(); return renderLogin('Usuario inactivo. Contactar al administrador del sistema.'); }
   S.perfil = p;
   $('#app').innerHTML = '<div class="login"><div class="msg info">Cargando…</div></div>';
-  try { await cargar(); } catch (e) { $('#app').innerHTML = `<div class="login"><div class="msg err">No se pudo cargar: ${esc(e.message || e)}</div></div>`; return; }
+  try { await cargar(); } catch (e) { $('#app').innerHTML = `<div class="login"><div class="msg err">Error al cargar la información: ${esc(e.message || e)}</div></div>`; return; }
   shell();
 }
 
@@ -153,7 +153,7 @@ function shell() {
   const tabs = [['resumen', 'Resumen'], ['folios', 'Folios'], ['ingresos', 'Ingresos']];
   if (puedeCapturar()) tabs.push(['capturar', 'Capturar'], ['importar', 'Importar Excel']);
   $('#app').innerHTML = `<header><div class="top"><h1>Folios<small>egresos e ingresos</small></h1>
-    <div class="who">${esc(S.perfil.nombre || S.perfil.correo || '')}<br><a href="#" id="out" style="color:#fff">Salir</a></div></div>
+    <div class="who">${esc(S.perfil.nombre || S.perfil.correo || '')}<br><a href="#" id="out" style="color:#fff">Cerrar sesión</a></div></div>
     <nav>${tabs.map(t => `<button data-t="${t[0]}" class="${S.tab === t[0] ? 'on' : ''}">${t[1]}</button>`).join('')}</nav></header><main id="m"></main>`;
   document.querySelectorAll('nav button').forEach(b => b.onclick = () => { S.tab = b.dataset.t; shell(); });
   $('#out').onclick = async e => { e.preventDefault(); await sb.auth.signOut(); location.reload(); };
@@ -197,7 +197,7 @@ function vResumen() {
   <div class="kpi"><small>Folios</small><b>${eg.length}</b></div></div>
   ${tabla('Egresos por categoría', eg, r => r.categoria || 'SIN CATEGORÍA')}
   ${tabla('Ingresos por cliente', ing, r => r.concepto)}
-  <p class="mut" style="font-size:12.5px">Platón viene del Google Sheet OFICINA PLATON; el resto es lo capturado o importado aquí.</p>`;
+  <p class="mut" style="font-size:12.5px">Fuente: Platón, Google Sheet OFICINA PLATON; demás unidades, registros capturados o importados en el sistema.</p>`;
   ligaFiltros(vResumen);
 }
 
@@ -207,16 +207,16 @@ function vFolios() {
   const tot = rows.reduce((s, r) => s + Number(r.monto), 0);
   const conCh = rows.filter(r => S.cruce[r.cargo_id + '-' + r.folio]).length;
   $('#m').innerHTML = `${filtrosHTML(true)}
-  <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> folios · <b>${money(tot)}</b> · <span class="mut">${conCh} con cheque en la app, ${rows.length - conCh} sin cheque (efectivo)</span></div>
+  <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> folios · <b>${money(tot)}</b> · <span class="mut">${conCh} con cheque registrado, ${rows.length - conCh} sin cheque (efectivo)</span></div>
   <button class="btn sec" id="xl">Descargar Excel</button></div>
   <div class="tw"><table><thead><tr>${S.unidad ? '' : '<th>Unidad</th>'}<th>Cargo</th><th class="n">Folio</th><th>Fecha</th><th>Concepto</th><th>Categoría</th><th class="n">Monto</th><th>Pago</th>${esAdmin() ? '<th></th>' : ''}</tr></thead><tbody>
   ${rows.map(r => { const ch = S.cruce[r.cargo_id + '-' + r.folio]; return `<tr>${S.unidad ? '' : `<td>${nomU(r.unidad)}</td>`}<td>${CARGOS[r.cargo_id]}</td><td class="n folio">${r.folio}</td><td>${r.fecha.split('-').reverse().join('/')}</td><td class="wrap">${esc(r.concepto)}</td><td>${esc(r.categoria || '')}</td><td class="n">${money(r.monto)}</td>
-  <td>${ch ? `<span class="badge b-ok">Cheque ${esc(ch)}</span>` : '<span class="badge b-no">Sin cheque</span>'}</td>${esAdmin() ? `<td><a href="#" data-an="${r.id}" class="mut">anular</a></td>` : ''}</tr>`; }).join('')}
+  <td>${ch ? `<span class="badge b-ok">Cheque ${esc(ch)}</span>` : '<span class="badge b-no">Sin cheque</span>'}</td>${esAdmin() ? `<td><a href="#" data-an="${r.id}" class="mut">Anular</a></td>` : ''}</tr>`; }).join('')}
   </tbody></table></div>`;
   ligaFiltros(vFolios);
   $('#xl').onclick = () => bajarExcel('folios_platon.xlsx', rows.map(r => ({ UNIDAD: r.unidad, FECHA: r.fecha, CARGO: CARGOS[r.cargo_id], FOLIO: r.folio, CONCEPTO: r.concepto, MONTO: Number(r.monto), CATEGORIA: r.categoria, CHEQUE: S.cruce[r.cargo_id + '-' + r.folio] || '' })));
   document.querySelectorAll('[data-an]').forEach(a => a.onclick = async e => {
-    e.preventDefault(); const nota = prompt('Motivo para anular este folio (queda guardado, no se borra):'); if (!nota) return;
+    e.preventDefault(); const nota = prompt('Motivo de anulación del folio (el registro se conserva):'); if (!nota) return;
     const { error } = await sb.rpc('platon_anular', { p_id: +a.dataset.an, p_nota: nota }); if (error) return alert(error.message);
     await cargar(); vFolios();
   });
@@ -229,12 +229,12 @@ function vIngresos() {
   $('#m').innerHTML = `${filtrosHTML(true)}
   <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> ingresos · <b class="pos">${money(tot)}</b></div><button class="btn sec" id="xl">Descargar Excel</button></div>
   <div class="tw"><table><thead><tr>${S.unidad ? '' : '<th>Unidad</th>'}<th>Fecha</th><th>Cargo</th><th>Cliente</th><th class="n">Monto</th>${esAdmin() ? '<th></th>' : ''}</tr></thead><tbody>
-  ${rows.map(r => `<tr>${S.unidad ? '' : `<td>${nomU(r.unidad)}</td>`}<td>${r.fecha.split('-').reverse().join('/')}</td><td>${CARGOS[r.cargo_id]}</td><td class="wrap">${esc(r.concepto)}</td><td class="n">${money(r.monto)}</td>${esAdmin() ? `<td><a href="#" data-an="${r.id}" class="mut">anular</a></td>` : ''}</tr>`).join('')}
+  ${rows.map(r => `<tr>${S.unidad ? '' : `<td>${nomU(r.unidad)}</td>`}<td>${r.fecha.split('-').reverse().join('/')}</td><td>${CARGOS[r.cargo_id]}</td><td class="wrap">${esc(r.concepto)}</td><td class="n">${money(r.monto)}</td>${esAdmin() ? `<td><a href="#" data-an="${r.id}" class="mut">Anular</a></td>` : ''}</tr>`).join('')}
   </tbody></table></div>`;
   ligaFiltros(vIngresos);
   $('#xl').onclick = () => bajarExcel('ingresos_platon.xlsx', rows.map(r => ({ UNIDAD: r.unidad, FECHA: r.fecha, CARGO: CARGOS[r.cargo_id], CLIENTE: r.concepto, MONTO: Number(r.monto) })));
   document.querySelectorAll('[data-an]').forEach(a => a.onclick = async e => {
-    e.preventDefault(); const nota = prompt('Motivo para anular este ingreso (queda guardado, no se borra):'); if (!nota) return;
+    e.preventDefault(); const nota = prompt('Motivo de anulación del ingreso (el registro se conserva):'); if (!nota) return;
     const { error } = await sb.rpc('platon_anular', { p_id: +a.dataset.an, p_nota: nota }); if (error) return alert(error.message);
     await cargar(); vIngresos();
   });
@@ -253,7 +253,7 @@ function vCapturar() {
   ${f.tipo === 'EGRESO' ? `<div class="msg info">Folio que se asignará: <b class="folio" style="font-size:20px">${proxFolio(f.cargo)}</b></div>` : ''}
   <label>Fecha</label><input type="date" id="cf" value="${hoy}">
   <label>${f.tipo === 'EGRESO' ? 'Concepto / descripción' : 'Cliente'}</label><input id="cc" autocomplete="off" placeholder="${f.tipo === 'EGRESO' ? 'Ej. TELCEL, RAYAS, PAPELERIA…' : 'Nombre del cliente'}">
-  ${f.tipo === 'EGRESO' ? `<label>Categoría</label><input id="ck" list="cats" autocomplete="off" placeholder="Elige o escribe"><datalist id="cats">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist>` : ''}
+  ${f.tipo === 'EGRESO' ? `<label>Categoría</label><input id="ck" list="cats" autocomplete="off" placeholder="Seleccionar o capturar"><datalist id="cats">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist>` : ''}
   <label>Monto</label><input id="cm" type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00">
   <div style="margin-top:14px"><button class="btn gold" id="go" style="width:100%">Guardar ${f.tipo === 'EGRESO' ? 'folio' : 'ingreso'}</button></div><div id="res"></div></div>`;
   $('#sg').querySelectorAll('button').forEach(b => b.onclick = () => { f.tipo = b.dataset.t; vCapturar(); });
@@ -262,13 +262,13 @@ function vCapturar() {
   $('#cg').querySelectorAll('button').forEach(b => b.onclick = () => { f.cargo = +b.dataset.c; vCapturar(); });
   $('#go').onclick = async () => {
     const concepto = $('#cc').value.trim(), monto = parseFloat($('#cm').value), fecha = $('#cf').value;
-    if (!concepto || !(monto > 0) || !fecha) return $('#res').innerHTML = '<div class="msg err">Falta fecha, concepto o monto.</div>';
+    if (!concepto || !(monto > 0) || !fecha) return $('#res').innerHTML = '<div class="msg err">Se requiere fecha, concepto y monto.</div>';
     const b = $('#go'); b.disabled = true;
     const { data, error } = await sb.rpc('folios_capturar', { p_unidad: f.unidad, p_cargo: f.cargo, p_tipo: f.tipo, p_fecha: fecha, p_concepto: concepto, p_categoria: f.tipo === 'EGRESO' ? ($('#ck').value || null) : null, p_monto: monto });
     b.disabled = false;
     if (error) return $('#res').innerHTML = `<div class="msg err">${esc(error.message)}</div>`;
     await cargar(); vCapturar();
-    $('#res').innerHTML = `<div class="msg ok">Guardado ${f.tipo === 'EGRESO' ? 'con el folio ' + data.folio : ''} · ${money(data.monto)} · ${esc(data.concepto)}</div>`;
+    $('#res').innerHTML = `<div class="msg ok">Registro guardado ${f.tipo === 'EGRESO' ? 'con el folio ' + data.folio : ''} · ${money(data.monto)} · ${esc(data.concepto)}</div>`;
   };
 }
 
@@ -325,7 +325,7 @@ function leerLibro(wb, unidad) {
     const filas = XLSX.utils.sheet_to_json(wb.Sheets[hoja], { header: 1, raw: true, defval: null, blankrows: true });
     const mesHoja = MESES_L.findIndex(m => norm(hoja).includes(m));
     let blq = null, titulo = null;   // titulo: {cargo, texto} visto antes del encabezado
-    const cierra = () => { if (blq && blq.n && blq.total != null && Math.abs(r2(blq.suma) - r2(blq.total)) > 0.009) res.avisos.push(`Hoja ${hoja}: la suma de los folios de ${blq.nombre} (${money(blq.suma)}) no es igual al TOTAL del Excel (${money(blq.total)}). Revisa si hay una fila sin fecha o sin importe.`); blq = null; };
+    const cierra = () => { if (blq && blq.n && blq.total != null && Math.abs(r2(blq.suma) - r2(blq.total)) > 0.009) res.avisos.push(`Hoja ${hoja}: la suma de los folios de ${blq.nombre} (${money(blq.suma)}) no coincide con el TOTAL del Excel (${money(blq.total)}). Posible fila sin fecha o sin importe.`); blq = null; };
     filas.forEach((r, i) => {
       if (!r) return; const fila = i + 1;
       const textos = r.map(c => typeof c === 'string' ? norm(c) : '');
@@ -339,7 +339,7 @@ function leerLibro(wb, unidad) {
         if (!cargo && c.cg < 0) { cargo = cargoEnTexto(hoja); nombre = hoja; }
         if (c.co < 0) { res.ignorados.push(`Hoja ${hoja}, fila ${fila}: tabla sin columna CONCEPTO.`); titulo = null; return; }
         if (c.cg < 0 && !cargo) { res.ignorados.push(`Hoja ${hoja}, fila ${fila}: bloque ${titulo && titulo.texto ? '«' + titulo.texto + '» ' : ''}sin cargo reconocido; no se importa.`); blq = { skip: true }; titulo = null; return; }
-        if (cargo && !permitido(cargo)) { res.ignorados.push(`Hoja ${hoja}, fila ${fila}: bloque de ${CARGOS[cargo]} — ese cargo no lleva folios en ${nomU(unidad)}; no se importa.`); blq = { skip: true }; titulo = null; return; }
+        if (cargo && !permitido(cargo)) { res.ignorados.push(`Hoja ${hoja}, fila ${fila}: bloque de ${CARGOS[cargo]} sin folios registrados en ${nomU(unidad)}; no se importa.`); blq = { skip: true }; titulo = null; return; }
         blq = { c, cargo, nombre: CARGOS[cargo] || 'la tabla', suma: 0, n: 0, total: null, oficina: !!titulo && c.cg < 0 };
         titulo = null; return;
       }
@@ -368,13 +368,13 @@ function leerLibro(wb, unidad) {
       else if (monto < 0 && blq.oficina) err.push('importe negativo');
       if (!concepto) err.push('falta el concepto');
       if (!cargo) err.push('cargo no reconocido');
-      else if (!permitido(cargo)) err.push(`${CARGOS[cargo]} no lleva folios en ${nomU(unidad)}`);
-      if (!tipo) err.push('tipo no reconocido (debe ser EGRESO o INGRESO)');
+      else if (!permitido(cargo)) err.push(`${CARGOS[cargo]} sin folios registrados en ${nomU(unidad)}`);
+      if (!tipo) err.push('tipo no reconocido (valores válidos: EGRESO o INGRESO)');
       if (tipo === 'EGRESO' && !vacio(folioRaw) && !(folioN > 0 && Number.isInteger(folioN))) err.push(`folio no válido («${folioRaw}»)`);
       if (tipo === 'EGRESO' && blq.oficina && vacio(folioRaw)) err.push('falta el número de folio');
       if (monto != null && monto > 0) { blq.suma += monto; blq.n++; }
       if (err.length) { res.errores.push(`${donde} (${CARGOS[cargo] || '¿cargo?'}${!vacio(folioRaw) ? ' folio ' + folioRaw : ''}): ${err.join(', ')}.`); return; }
-      if (mesHoja >= 0 && +fecha.slice(5, 7) !== mesHoja + 1) res.avisos.push(`${donde}: el folio ${folioN || ''} de ${CARGOS[cargo]} tiene fecha ${fecha.split('-').reverse().join('/')} y está en la hoja ${hoja}. Se importa con su fecha.`);
+      if (mesHoja >= 0 && +fecha.slice(5, 7) !== mesHoja + 1) res.avisos.push(`${donde}: el folio ${folioN || ''} de ${CARGOS[cargo]} tiene fecha ${fecha.split('-').reverse().join('/')} y se encuentra en la hoja ${hoja}; se importa con la fecha registrada.`);
       res.filas.push({ hoja, fila, cargo_id: cargo, tipo, fecha, folio: tipo === 'EGRESO' && folioN ? folioN : null, concepto, monto: r2(Math.abs(monto)),
         categoria: c.cat >= 0 && !vacio(r[c.cat]) ? norm(r[c.cat]) : '', unidad: c.u >= 0 && !vacio(r[c.u]) ? norm(r[c.u]) : unidad });
     });
@@ -383,7 +383,7 @@ function leerLibro(wb, unidad) {
   // folios repetidos dentro del mismo archivo
   const vistos = {};
   res.filas.forEach(f => { if (f.tipo === 'EGRESO' && f.folio) { const k = f.unidad + '|' + f.cargo_id + '|' + f.folio; (vistos[k] = vistos[k] || []).push(f); } });
-  Object.values(vistos).filter(a => a.length > 1).forEach(a => { a.forEach(f => f.rep = true); res.errores.push(`El folio ${a[0].folio} de ${CARGOS[a[0].cargo_id]} aparece ${a.length} veces en el archivo (${a.map(f => 'hoja ' + f.hoja + ' fila ' + f.fila).join(', ')}). Corrige el Excel; no se importa ninguno de esos renglones.`); });
+  Object.values(vistos).filter(a => a.length > 1).forEach(a => { a.forEach(f => f.rep = true); res.errores.push(`El folio ${a[0].folio} de ${CARGOS[a[0].cargo_id]} aparece ${a.length} veces en el archivo (${a.map(f => 'hoja ' + f.hoja + ' fila ' + f.fila).join(', ')}). Ninguno de esos renglones se importa hasta corregir el archivo.`); });
   res.filas = res.filas.filter(f => !f.rep);
   return res;
 }
@@ -401,7 +401,7 @@ function comparar(res) {
       if (!a) { nuevos.push({ ...f, categoria: f.categoria || catSugerida(f.cargo_id, f.concepto), incl: true }); return; }
       const dif = [];
       if (a.fecha !== f.fecha) dif.push(['Fecha', a.fecha.split('-').reverse().join('/'), f.fecha.split('-').reverse().join('/')]);
-      if (Math.abs(Number(a.monto) - f.monto) > 0.004) { const q = f.monto / Number(a.monto); dif.push(['Monto', money(a.monto), money(f.monto), (q > 8 && q < 12) || (q > 1 / 12 && q < 1 / 8) ? 'parece un dígito de más o de menos: revisa cuál está bien' : '']); }
+      if (Math.abs(Number(a.monto) - f.monto) > 0.004) { const q = f.monto / Number(a.monto); dif.push(['Monto', money(a.monto), money(f.monto), (q > 8 && q < 12) || (q > 1 / 12 && q < 1 / 8) ? 'posible dígito de más o de menos; verificar el monto correcto' : '']); }
       if (norm(a.concepto) !== norm(f.concepto)) dif.push(['Concepto', a.concepto, f.concepto.toUpperCase()]);
       if (dif.length) cambios.push({ ...f, id: a.id, dif, incl: false }); else iguales.push(f);
       return;
@@ -419,7 +419,7 @@ function comparar(res) {
   res.filas.filter(f => f.folio).forEach(f => (porCargo[f.unidad + '|' + f.cargo_id] = porCargo[f.unidad + '|' + f.cargo_id] || new Set()).add(f.folio));
   new Set(nuevos.filter(f => f.folio).map(f => f.unidad + '|' + f.cargo_id)).forEach(k => {
     const set = porCargo[k], mx = Math.max(...set), falt = []; for (let n = 1; n <= mx; n++) if (!set.has(n)) falt.push(n);
-    if (falt.length) avisos.push(`${CARGOS[+k.split('|')[1]]}: no existen los folios ${falt.length > 12 ? falt.slice(0, 12).join(', ') + '…' : falt.join(', ')} (ni en la app ni en el archivo). Revisa si se saltó la numeración.`);
+    if (falt.length) avisos.push(`${CARGOS[+k.split('|')[1]]}: no existen los folios ${falt.length > 12 ? falt.slice(0, 12).join(', ') + '…' : falt.join(', ')} (ni en el sistema ni en el archivo). Posible salto en la numeración.`);
   });
   nuevos.sort((a, b) => a.cargo_id - b.cargo_id || (a.folio || 1e9) - (b.folio || 1e9) || a.fecha.localeCompare(b.fecha));
   cambios.sort((a, b) => a.cargo_id - b.cargo_id || a.folio - b.folio);
@@ -434,37 +434,36 @@ function vImportar() {
       ${im.nuevos.map((x, i) => `<tr style="${x.incl ? '' : 'opacity:.5'}"><td><input type="checkbox" data-n="${i}" ${x.incl ? 'checked' : ''} style="width:auto"></td><td>${CARGOS[x.cargo_id]}</td><td>${x.tipo === 'EGRESO' ? 'Folio' : 'Ingreso'}</td><td class="n folio">${x.folio || (x.tipo === 'EGRESO' ? '<span class="mut">auto</span>' : '')}</td><td>${x.fecha.split('-').reverse().join('/')}</td><td class="wrap">${esc(x.concepto)}</td>
       <td>${x.tipo === 'EGRESO' ? `<input data-cat="${i}" list="catsI" value="${esc(x.categoria)}" style="min-width:150px;padding:6px">` : ''}</td><td class="n">${money(x.monto)}</td><td class="mut">${esc(x.hoja)} · ${x.fila}</td></tr>`).join('')}
       </tbody></table><datalist id="catsI">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>` : '<p class="mut">No hay movimientos nuevos en el archivo.</p>';
-    if (im.vista === 'cambios') return im.cambios.length ? `<p class="mut" style="margin:0 0 8px">Estos folios ya están en la app pero el Excel trae otro dato. <b>No se cambia nada a menos que lo marques.</b> El valor anterior queda guardado en la bitácora.</p>
-      <div class="tw"><table><thead><tr><th><input type="checkbox" id="todosC" ${im.cambios.every(x => x.incl) ? 'checked' : ''} style="width:auto"></th><th>Cargo</th><th class="n">Folio</th><th>Qué cambia</th><th>En la app</th><th>En el Excel</th><th>Hoja</th></tr></thead><tbody>
+    if (im.vista === 'cambios') return im.cambios.length ? `<p class="mut" style="margin:0 0 8px">Folios registrados con datos distintos en el Excel. Solo se aplican los cambios seleccionados; el valor anterior se conserva en la bitácora.</p>
+      <div class="tw"><table><thead><tr><th><input type="checkbox" id="todosC" ${im.cambios.every(x => x.incl) ? 'checked' : ''} style="width:auto"></th><th>Cargo</th><th class="n">Folio</th><th>Campo</th><th>En el sistema</th><th>En el Excel</th><th>Hoja</th></tr></thead><tbody>
       ${im.cambios.map((x, i) => x.dif.map((d, j) => `<tr>${j === 0 ? `<td rowspan="${x.dif.length}"><input type="checkbox" data-c="${i}" ${x.incl ? 'checked' : ''} style="width:auto"></td><td rowspan="${x.dif.length}">${CARGOS[x.cargo_id]}</td><td rowspan="${x.dif.length}" class="n folio">${x.folio}</td>` : ''}<td>${d[0]}${d[3] ? `<div class="badge b-bad" style="white-space:normal">⚠ ${d[3]}</div>` : ''}</td><td class="wrap">${esc(d[1])}</td><td class="wrap"><b>${esc(d[2])}</b></td>${j === 0 ? `<td rowspan="${x.dif.length}" class="mut">${esc(x.hoja)} · ${x.fila}</td>` : ''}</tr>`).join('')).join('')}
-      </tbody></table></div>` : '<p class="mut">Ningún folio cambió: todo lo que ya estaba en la app coincide con el Excel.</p>';
-    if (im.vista === 'iguales') return `<p class="mut">${im.iguales.length} renglones del archivo ya están en la app exactamente igual. No se hace nada con ellos.</p>`;
-    if (im.vista === 'soloapp') return im.soloApp.length ? `<p class="mut" style="margin:0 0 8px">Estos folios están en la app, en los mismos meses y cargos del archivo, pero <b>no aparecen en el Excel</b>. No se tocan; revísalos por si faltó pasarlos al Excel o hay que anularlos a mano.</p><div class="tw"><table><thead><tr><th>Cargo</th><th class="n">Folio</th><th>Fecha</th><th>Concepto</th><th class="n">Monto</th></tr></thead><tbody>${im.soloApp.map(r => `<tr><td>${CARGOS[r.cargo_id]}</td><td class="n folio">${r.folio}</td><td>${r.fecha.split('-').reverse().join('/')}</td><td class="wrap">${esc(r.concepto)}</td><td class="n">${money(r.monto)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="mut">Todo lo de la app en esos meses también está en el Excel.</p>';
-    return `${im.errores.length ? `<div class="msg err"><b>No se pueden importar (${im.errores.length}):</b><br>${im.errores.map(esc).join('<br>')}</div>` : '<div class="msg ok">El archivo no tiene errores.</div>'}
+      </tbody></table></div>` : '<p class="mut">Sin diferencias entre el sistema y el Excel.</p>';
+    if (im.vista === 'iguales') return `<p class="mut">${im.iguales.length} renglones del archivo ya registrados sin diferencias.</p>`;
+    if (im.vista === 'soloapp') return im.soloApp.length ? `<p class="mut" style="margin:0 0 8px">Folios del sistema, de los mismos meses y cargos, que <b>no aparecen en el Excel</b>. No se modifican.</p><div class="tw"><table><thead><tr><th>Cargo</th><th class="n">Folio</th><th>Fecha</th><th>Concepto</th><th class="n">Monto</th></tr></thead><tbody>${im.soloApp.map(r => `<tr><td>${CARGOS[r.cargo_id]}</td><td class="n folio">${r.folio}</td><td>${r.fecha.split('-').reverse().join('/')}</td><td class="wrap">${esc(r.concepto)}</td><td class="n">${money(r.monto)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="mut">Todos los folios del sistema en esos meses aparecen en el Excel.</p>';
+    return `${im.errores.length ? `<div class="msg err"><b>Renglones con error (${im.errores.length}):</b><br>${im.errores.map(esc).join('<br>')}</div>` : '<div class="msg ok">Sin errores en el archivo.</div>'}
       ${im.avisos.length ? `<div class="msg info"><b>Avisos (${im.avisos.length}):</b><br>${im.avisos.map(esc).join('<br>')}</div>` : ''}
-      ${im.ignorados.length ? `<div class="msg info"><b>Partes del archivo que no se leen:</b><br>${im.ignorados.map(esc).join('<br>')}</div>` : ''}`;
+      ${im.ignorados.length ? `<div class="msg info"><b>Secciones omitidas del archivo:</b><br>${im.ignorados.map(esc).join('<br>')}</div>` : ''}`;
   };
   const pest = (k, l, n, cls) => `<button class="chip ${im.vista === k ? 'on' : ''}" data-v="${k}">${l} <b class="${cls || ''}">${n}</b></button>`;
   $('#m').innerHTML = `<div class="card"><b>Importar Excel de folios</b>
-  <p class="mut" style="margin:6px 0 12px">Sube el archivo de la oficina tal como lo usan (<b>FOLIOS 2026.xls</b>: una hoja por mes y un bloque por ingeniero con FECHA, N° FOLIO, CONCEPTO e IMPORTE). También acepta una tabla con columnas FECHA, CARGO, CONCEPTO, MONTO (y FOLIO, TIPO, CATEGORIA si las trae).
-  Puedes subir el archivo completo cada vez: lo que ya está no se duplica, los folios nuevos entran con su mismo número y nada se borra.</p>
-  <label>Unidad de este archivo</label><select id="iu">${uns.map(u => `<option value="${u}" ${(S.impU || 'PLATON') === u ? 'selected' : ''}>${nomU(u)}</option>`).join('')}</select>
+  <p class="mut" style="margin:6px 0 12px">Formatos admitidos: <b>FOLIOS 2026.xls</b> (una hoja por mes, un bloque por cargo) o tabla con columnas FECHA, CARGO, CONCEPTO y MONTO. Los registros existentes no se duplican ni se eliminan.</p>
+  <label>Unidad del archivo</label><select id="iu">${uns.map(u => `<option value="${u}" ${(S.impU || 'PLATON') === u ? 'selected' : ''}>${nomU(u)}</option>`).join('')}</select>
   <div class="drop" style="margin-top:12px"><input type="file" id="fx" accept=".xls,.xlsx,.xlsm,.csv"></div><div id="res"></div></div>
   ${im ? `<div class="card"><div class="row" style="justify-content:space-between;align-items:center"><div><b>${esc(im.archivo)}</b> · <span class="mut">${im.filas.length} renglones leídos de ${im.hojas} hoja(s)</span></div>
-    <button class="btn gold" id="go" ${nN + nC ? '' : 'disabled'}>${nN + nC ? `Guardar ${nN ? nN + ' nuevo' + (nN === 1 ? '' : 's') : ''}${nN && nC ? ' y ' : ''}${nC ? nC + ' cambio' + (nC === 1 ? '' : 's') : ''}` : 'Nada por guardar'}</button></div>
-    <div class="chips" style="margin-top:10px">${pest('nuevos', 'Nuevos', im.nuevos.length, 'pos')}${pest('cambios', 'Con diferencias', im.cambios.length, im.cambios.length ? 'neg' : '')}${pest('iguales', 'Sin cambios', im.iguales.length)}${pest('soloapp', 'Solo en la app', im.soloApp.length)}${pest('revision', 'Errores y avisos', im.errores.length + im.avisos.length, im.errores.length ? 'neg' : '')}</div></div>
-    ${im.errores.length && im.vista !== 'revision' ? `<div class="msg err">Hay ${im.errores.length} renglón(es) con error que no se importarán. <a href="#" data-v="revision">Ver detalle</a></div>` : ''}
+    <button class="btn gold" id="go" ${nN + nC ? '' : 'disabled'}>${nN + nC ? `Guardar ${nN ? nN + ' nuevo' + (nN === 1 ? '' : 's') : ''}${nN && nC ? ' y ' : ''}${nC ? nC + ' cambio' + (nC === 1 ? '' : 's') : ''}` : 'Sin cambios por guardar'}</button></div>
+    <div class="chips" style="margin-top:10px">${pest('nuevos', 'Nuevos', im.nuevos.length, 'pos')}${pest('cambios', 'Con diferencias', im.cambios.length, im.cambios.length ? 'neg' : '')}${pest('iguales', 'Sin cambios', im.iguales.length)}${pest('soloapp', 'Solo en el sistema', im.soloApp.length)}${pest('revision', 'Errores y avisos', im.errores.length + im.avisos.length, im.errores.length ? 'neg' : '')}</div></div>
+    ${im.errores.length && im.vista !== 'revision' ? `<div class="msg err">${im.errores.length} renglón(es) con error no se importarán. <a href="#" data-v="revision">Ver detalle</a></div>` : ''}
     ${tabla()}` : ''}`;
   $('#iu').onchange = e => { S.impU = e.target.value; if (S.imp) { S.imp = null; vImportar(); } };
   $('#fx').onchange = async e => {
     const f = e.target.files[0]; if (!f) return; e.target.value = '';
-    $('#res').innerHTML = '<div class="msg info">Leyendo el archivo…</div>';
+    $('#res').innerHTML = '<div class="msg info">Procesando archivo…</div>';
     try {
       const wb = XLSX.read(await f.arrayBuffer(), { type: 'array', cellDates: false, cellNF: false, cellText: false });
       const r = leerLibro(wb, S.impU || 'PLATON');
-      if (!r.filas.length && !r.errores.length) { S.imp = null; return $('#res').innerHTML = `<div class="msg err">No encontré folios en el archivo. Debe tener encabezados FECHA, N° FOLIO, CONCEPTO e IMPORTE (o MONTO).${r.ignorados.length ? '<br>' + r.ignorados.map(esc).join('<br>') : ''}</div>`; }
+      if (!r.filas.length && !r.errores.length) { S.imp = null; return $('#res').innerHTML = `<div class="msg err">No se encontraron folios en el archivo. Encabezados requeridos: FECHA, N° FOLIO, CONCEPTO e IMPORTE (o MONTO).${r.ignorados.length ? '<br>' + r.ignorados.map(esc).join('<br>') : ''}</div>`; }
       S.imp = { ...comparar(r), archivo: f.name, hojas: wb.SheetNames.length };
-    } catch (er) { S.imp = null; return $('#res').innerHTML = `<div class="msg err">No se pudo leer el archivo: ${esc(er.message)}</div>`; }
+    } catch (er) { S.imp = null; return $('#res').innerHTML = `<div class="msg err">Error al leer el archivo: ${esc(er.message)}</div>`; }
     vImportar();
   };
   if (!im) return;
@@ -476,7 +475,7 @@ function vImportar() {
   if ($('#todosC')) $('#todosC').onchange = e => { im.cambios.forEach(x => x.incl = e.target.checked); vImportar(); };
   $('#go').onclick = async () => {
     const nuevos = im.nuevos.filter(x => x.incl), cambios = im.cambios.filter(x => x.incl);
-    if (cambios.length && !confirm(`Vas a cambiar ${cambios.length} folio(s) que ya estaban en la app con los datos del Excel. El dato anterior queda en la bitácora. ¿Continuar?`)) return;
+    if (cambios.length && !confirm(`Se actualizarán ${cambios.length} folio(s) existentes con los datos del Excel. El valor anterior se conservará en la bitácora. ¿Continuar?`)) return;
     const b = $('#go'); b.disabled = true; const lote = 'xls-' + new Date().toISOString().replace(/\D/g, '').slice(0, 14);
     const tot = { nuevos: 0, cambios: 0, omitidos: [] };
     const N = nuevos.map(x => ({ unidad: x.unidad, cargo_id: x.cargo_id, tipo: x.tipo, folio: x.folio, fecha: x.fecha, concepto: x.concepto, categoria: x.categoria || null, monto: x.monto }));
@@ -490,10 +489,10 @@ function vImportar() {
       }
     } catch (er) {
       b.disabled = false; b.textContent = 'Reintentar';
-      return $('#res').innerHTML = `<div class="msg err">${esc(er.message || er)}<br>Se guardaron ${tot.nuevos} nuevos y ${tot.cambios} cambios antes del error. Puedes volver a subir el mismo archivo: lo ya guardado aparecerá como «sin cambios» y no se duplica.</div>`;
+      return $('#res').innerHTML = `<div class="msg err">${esc(er.message || er)}<br>Registros guardados antes del error: ${tot.nuevos} nuevos y ${tot.cambios} cambios. Al cargar de nuevo el mismo archivo, lo ya guardado aparecerá en «Sin cambios» sin duplicarse.</div>`;
     }
     S.imp = null; await cargar(); vImportar();
-    $('#res').innerHTML = `<div class="msg ok">Listo: ${tot.nuevos} movimiento(s) nuevo(s) y ${tot.cambios} folio(s) actualizado(s).${tot.omitidos.length ? `<br><b>No se guardaron ${tot.omitidos.length}:</b><br>${tot.omitidos.map(esc).join('<br>')}` : ''}</div>`;
+    $('#res').innerHTML = `<div class="msg ok">Importación concluida: ${tot.nuevos} movimiento(s) nuevo(s) y ${tot.cambios} folio(s) actualizado(s).${tot.omitidos.length ? `<br><b>Registros no guardados (${tot.omitidos.length}):</b><br>${tot.omitidos.map(esc).join('<br>')}` : ''}</div>`;
   };
 }
 
