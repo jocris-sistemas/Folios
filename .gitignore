@@ -1,0 +1,9 @@
+*
+!index.html
+!manifest.json
+!sw.js
+!icon-*.png
+!README.md
+!.gitignore
+!.github/
+!.github/**

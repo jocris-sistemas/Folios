@@ -1,0 +1,92 @@
+name: Publicar cambios de Claude
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+  pages: write
+concurrency:
+  group: publicar
+  cancel-in-progress: false
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Traer cambios pendientes
+        id: traer
+        env:
+          SB_URL: https://hbttxvanyqczspljtqpz.supabase.co
+          SB_KEY: sb_publishable_J4abyTF0BPq47eBTVLjIFQ_5-x2HOiJ
+          APP: ${{ github.event.repository.name == 'Caja-Efectivo' && 'caja' || github.event.repository.name == 'Folios' && 'platon' || 'cheques' }}
+        run: |
+          cat > /tmp/publicar.py <<'PY'
+          # Publicador automático: trae de Supabase los cambios que Claude dejó listos y los aplica al repositorio.
+          # Solo toca archivos de la raíz (index.html, sw.js, ...). Nunca toca la carpeta .github.
+          import base64, gzip, hashlib, json, os, re, subprocess, sys, tempfile, urllib.request
+
+          URL, KEY, APP = os.environ['SB_URL'], os.environ['SB_KEY'], os.environ['APP']
+          RUTA_OK = re.compile(r'^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,80}$')
+
+          def rpc(fn, body):
+              req = urllib.request.Request(f'{URL}/rest/v1/rpc/{fn}', data=json.dumps(body).encode(),
+                                           headers={'apikey': KEY, 'Content-Type': 'application/json'})
+              with urllib.request.urlopen(req, timeout=40) as r:
+                  return json.load(r)
+
+          def sha(ruta):
+              if not os.path.exists(ruta): return 'nuevo'
+              with open(ruta, 'rb') as f: return hashlib.sha256(f.read()).hexdigest()
+
+          def aplicar(p):
+              ruta = p['ruta']
+              crudo = rpc('publicacion_datos', {'p_id': p['id']})
+              datos = gzip.decompress(base64.b64decode(crudo[3:])) if crudo.startswith('gz:') else crudo.encode('utf-8')
+              if p['tipo'] == 'completo':
+                  nuevo = datos
+              else:
+                  with tempfile.TemporaryDirectory() as d:
+                      dif, out = os.path.join(d, 'cambio.diff'), os.path.join(d, 'salida')
+                      open(dif, 'wb').write(datos)
+                      r = subprocess.run(['patch', '--batch', '--forward', '-r', '-', '-o', out, ruta, dif], capture_output=True, text=True)
+                      if r.returncode != 0: raise RuntimeError(f'no se pudo aplicar el cambio {p["id"]}: {r.stdout} {r.stderr}')
+                      nuevo = open(out, 'rb').read()
+              if hashlib.sha256(nuevo).hexdigest() != p['sha_nuevo']:
+                  raise RuntimeError(f'el cambio {p["id"]} no dio el resultado esperado; no se publica')
+              with open(ruta, 'wb') as f: f.write(nuevo)
+
+          # Nunca falla el trabajo (para no llenar el correo de avisos): si algo sale mal, lo dice y no publica nada de ese cambio.
+          try:
+              lista = [p for p in rpc('publicacion_lista', {'p_app': APP}) if RUTA_OK.match(p['ruta'] or '')]
+          except Exception as e:
+              print('No se pudo consultar Supabase:', e); lista = []
+          malos = set()
+          hechos = []
+          avanzo = True
+          while avanzo:
+              avanzo = False
+              for p in lista:
+                  actual = sha(p['ruta'])
+                  if p['id'] not in malos and actual == p['sha_base'] and actual != p['sha_nuevo']:
+                      try:
+                          aplicar(p); hechos.append(f"{p['ruta']} (cambio {p['id']})"); avanzo = True
+                      except Exception as e:
+                          malos.add(p['id']); print('ERROR:', e)
+          print('Aplicados: ' + (', '.join(hechos) if hechos else 'ninguno, ya está al día'))
+          with open(os.environ.get('GITHUB_OUTPUT', os.devnull), 'a') as f:
+              f.write('hubo=' + ('si' if hechos else 'no') + '\n')
+          PY
+          python3 /tmp/publicar.py
+      - name: Subir y publicar
+        if: steps.traer.outputs.hubo == 'si'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "jocris-publicador"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -u
+          git commit -m "Publicado automaticamente"
+          git push
+          gh api -X POST "repos/${{ github.repository }}/pages/builds" >/dev/null || true

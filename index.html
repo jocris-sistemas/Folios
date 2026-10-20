@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14345c">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Folios</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" integrity="sha384-Rj26LVGvoeRVR6+mwQmFfcR3QOBEwT+ZmuCWpuiqeTzJpCs0ER4ITAWGb4Hiy3Ok" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{--bg:#f3f5f9;--card:#fff;--ink:#17222f;--mut:#667386;--line:#dfe5ee;--pri:#14345c;--pri2:#1f4f8a;--gold:#c8962b;--ok:#18794e;--okbg:#e3f4eb;--bad:#b3261e;--badbg:#fbe9e7;--chip:#e8eef7}
+@media(prefers-color-scheme:dark){:root{--bg:#0d1520;--card:#15202e;--ink:#e6edf5;--mut:#94a3b5;--line:#25354a;--pri:#8fb6ea;--pri2:#6c9ad8;--gold:#e0b04a;--ok:#5fcf9a;--okbg:#14352a;--bad:#ff8c84;--badbg:#3a1b19;--chip:#1d2c40}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;-webkit-text-size-adjust:100%}
+header{background:#14345c;color:#fff;padding:calc(env(safe-area-inset-top) + 10px) 16px 0;position:sticky;top:0;z-index:5}
+header .top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+header h1{font-size:17px;margin:0;font-weight:700;letter-spacing:.2px}
+header h1 small{font-weight:400;opacity:.75;margin-left:6px}
+header .who{font-size:12px;opacity:.8;text-align:right}
+nav{display:flex;gap:2px;overflow-x:auto;margin:8px -16px 0;padding:0 12px}
+nav button{background:none;border:0;color:#fff;opacity:.7;padding:10px 12px;font:inherit;font-weight:600;border-bottom:3px solid transparent;white-space:nowrap;cursor:pointer}
+nav button.on{opacity:1;border-color:var(--gold)}
+main{padding:14px 16px 80px;max-width:1100px;margin:0 auto}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{background:var(--chip);border:1px solid transparent;color:var(--ink);padding:6px 12px;border-radius:99px;font:inherit;font-size:13.5px;font-weight:600;cursor:pointer}
+.chip.on{background:var(--pri);color:#fff}
+@media(prefers-color-scheme:dark){.chip.on{color:#0d1520}}
+input,select,textarea{font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:9px;padding:9px 10px;width:100%}
+label{display:block;font-size:12.5px;color:var(--mut);font-weight:600;margin:10px 0 4px}
+.btn{background:var(--pri);color:#fff;border:0;border-radius:10px;padding:11px 16px;font:inherit;font-weight:700;cursor:pointer}
+@media(prefers-color-scheme:dark){.btn{color:#0d1520}}
+.btn.sec{background:var(--chip);color:var(--ink)}
+.btn.gold{background:var(--gold);color:#1b1400}
+.btn:disabled{opacity:.5}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+.kpi small{color:var(--mut);display:block;font-size:12px;font-weight:600}
+.kpi b{font-size:19px;font-variant-numeric:tabular-nums}
+.pos{color:var(--ok)}.neg{color:var(--bad)}
+.tw{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--card)}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{padding:7px 9px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+th{position:sticky;top:0;background:var(--chip);font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.3px}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+td.wrap{white-space:normal;min-width:180px}
+tr.tot td{font-weight:800;background:var(--chip)}
+.badge{display:inline-block;padding:2px 8px;border-radius:99px;font-size:12px;font-weight:700}
+.b-ok{background:var(--okbg);color:var(--ok)}.b-no{background:var(--chip);color:var(--mut)}.b-bad{background:var(--badbg);color:var(--bad)}
+.folio{font-weight:800;color:var(--pri)}
+.msg{padding:10px 12px;border-radius:10px;margin:10px 0;font-weight:600}
+.msg.ok{background:var(--okbg);color:var(--ok)}.msg.err{background:var(--badbg);color:var(--bad)}.msg.info{background:var(--chip)}
+.login{max-width:360px;margin:12vh auto;padding:0 16px}
+.big{font-size:28px;font-weight:800;color:var(--pri)}
+.sticky-f{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.sticky-f input,.sticky-f select{width:auto;flex:1;min-width:130px}
+.drop{border:2px dashed var(--line);border-radius:12px;padding:22px;text-align:center;color:var(--mut)}
+.mut{color:var(--mut)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.seg button{border:0;background:var(--card);color:var(--ink);padding:9px 16px;font:inherit;font-weight:700;cursor:pointer}
+.seg button.on{background:var(--pri);color:#fff}
+@media(prefers-color-scheme:dark){.seg button.on{color:#0d1520}}
+@media(min-width:900px){
+header{padding:calc(env(safe-area-inset-top) + 10px) 32px 0}
+nav{margin:8px -8px 0;padding:0}
+main{max-width:none;padding:20px 32px 60px}
+.card{max-width:640px}
+table{font-size:14.5px}
+th,td{padding:9px 14px}
+.tw{max-height:calc(100vh - 290px);overflow:auto}
+.sticky-f input,.sticky-f select{max-width:340px}
+.grid{grid-template-columns:repeat(4,1fr)}
+td.wrap{white-space:normal;min-width:320px}
+}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+'use strict';
+const SUPABASE_URL = 'https://hbttxvanyqczspljtqpz.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_J4abyTF0BPq47eBTVLjIFQ_5-x2HOiJ';
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const money = n => (n < 0 ? '-' : '') + '$' + Math.abs(Number(n) || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+const CARGOS = {}, CARGO_ID = {};
+const limpia = n => String(n || '').replace(/^ING\.\s*/i, '').trim().toUpperCase();
+const S = { unidad: '', perfil: null, rows: [], cruce: {}, tab: 'resumen', cargo: 0, mes: '', q: '', anio: 2026, imp: null };
+const puedeCapturar = () => S.perfil && ['administrador', 'capturista'].includes(S.perfil.rol);
+const esAdmin = () => S.perfil && S.perfil.rol === 'administrador';
+
+/* ---------- datos ---------- */
+async function cargar() {
+  const { data: cg } = await sb.from('cargos').select('id,nombre,activo,solo_caja').order('id');
+  (cg || []).filter(c => c.activo && !c.solo_caja).forEach(c => { CARGOS[c.id] = limpia(c.nombre); CARGO_ID[limpia(c.nombre)] = c.id; });
+  let all = [], from = 0;
+  for (;;) {
+    const { data, error } = await sb.from('platon_movimientos').select('id,unidad,cargo_id,tipo,folio,fecha,concepto,categoria,monto,origen,lote,nota').eq('activo', true).order('fecha').order('id').range(from, from + 999);
+    if (error) throw error;
+    all = all.concat(data); if (data.length < 1000) break; from += 1000;
+  }
+  S.rows = all;
+  const cr = {};
+  from = 0;
+  for (;;) {
+    const { data, error } = await sb.from('platon_cruce').select('cargo_id,folio,cheques').not('cheques', 'is', null).range(from, from + 999);
+    if (error) break;
+    data.forEach(r => cr[r.cargo_id + '-' + r.folio] = r.cheques);
+    if (data.length < 1000) break; from += 1000;
+  }
+  S.cruce = cr;
+}
+const unidades = () => [...new Set(S.rows.map(r => r.unidad))].sort();
+const cargosDe = () => [...new Set(S.rows.filter(r => !S.unidad || r.unidad === S.unidad).map(r => r.cargo_id))].sort((a, b) => (CARGOS[a] || '').localeCompare(CARGOS[b] || ''));
+const nomU = u => ({ PLATON: 'Platón', CANCUN: 'Cancún' }[u] || u.charAt(0) + u.slice(1).toLowerCase());
+const filtradas = (tipo) => S.rows.filter(r => r.tipo === tipo && (!S.unidad || r.unidad === S.unidad) && (!S.cargo || r.cargo_id === S.cargo) && (!S.mes || r.fecha.slice(5, 7) === S.mes) &&
+  (!S.q || (r.concepto + ' ' + (r.categoria || '') + ' ' + (r.folio || '')).toLowerCase().includes(S.q.toLowerCase())));
+
+/* ---------- login ---------- */
+function renderLogin(msg) {
+  $('#app').innerHTML = `<div class="login"><div class="card"><div class="big">Folios</div><div class="mut">Egresos e ingresos</div>
+  ${msg ? `<div class="msg err">${esc(msg)}</div>` : ''}
+  <form id="fl"><label>Correo</label><input id="lm" type="email" autocomplete="username" required><label>Contraseña</label><input id="lp" type="password" autocomplete="current-password" required>
+  <div style="margin-top:14px"><button class="btn" style="width:100%" id="lb">Entrar</button></div></form>
+  <p class="mut" style="font-size:12.5px">Es el mismo usuario y contraseña de la app de cheques.</p></div></div>`;
+  $('#fl').onsubmit = async e => {
+    e.preventDefault(); const b = $('#lb'); b.disabled = true; b.textContent = 'Entrando…';
+    const { error } = await sb.auth.signInWithPassword({ email: $('#lm').value.trim().toLowerCase(), password: $('#lp').value });
+    if (error) return renderLogin(/invalid/i.test(error.message) ? 'Correo o contraseña incorrectos.' : 'No se pudo entrar: ' + error.message);
+    boot();
+  };
+}
+async function boot() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) return renderLogin();
+  const { data: p, error } = await sb.from('perfiles').select('*').eq('id', session.user.id).maybeSingle();
+  if (error) { $('#app').innerHTML = '<div class="login"><div class="msg err">Sin conexión con el servidor.</div></div>'; return; }
+  if (!p || !p.activo) { await sb.auth.signOut(); return renderLogin('Tu usuario no está activo. Avísale a Pedro.'); }
+  S.perfil = p;
+  $('#app').innerHTML = '<div class="login"><div class="msg info">Cargando…</div></div>';
+  try { await cargar(); } catch (e) { $('#app').innerHTML = `<div class="login"><div class="msg err">No se pudo cargar: ${esc(e.message || e)}</div></div>`; return; }
+  shell();
+}
+
+/* ---------- estructura ---------- */
+function shell() {
+  const tabs = [['resumen', 'Resumen'], ['folios', 'Folios'], ['ingresos', 'Ingresos']];
+  if (puedeCapturar()) tabs.push(['capturar', 'Capturar'], ['importar', 'Importar Excel']);
+  $('#app').innerHTML = `<header><div class="top"><h1>Folios<small>egresos e ingresos</small></h1>
+    <div class="who">${esc(S.perfil.nombre || S.perfil.correo || '')}<br><a href="#" id="out" style="color:#fff">Salir</a></div></div>
+    <nav>${tabs.map(t => `<button data-t="${t[0]}" class="${S.tab === t[0] ? 'on' : ''}">${t[1]}</button>`).join('')}</nav></header><main id="m"></main>`;
+  document.querySelectorAll('nav button').forEach(b => b.onclick = () => { S.tab = b.dataset.t; shell(); });
+  $('#out').onclick = async e => { e.preventDefault(); await sb.auth.signOut(); location.reload(); };
+  ({ resumen: vResumen, folios: vFolios, ingresos: vIngresos, capturar: vCapturar, importar: vImportar })[S.tab]();
+}
+function filtrosHTML(conBuscar) {
+  const meses = MESES.map((m, i) => `<option value="${String(i + 1).padStart(2, '0')}" ${S.mes === String(i + 1).padStart(2, '0') ? 'selected' : ''}>${m}</option>`).join('');
+  const us = unidades(); if (S.cargo && !cargosDe().includes(S.cargo)) S.cargo = 0;
+  return `${us.length > 1 ? `<div class="chips" style="margin-bottom:8px">${[['', 'Todas las unidades'], ...us.map(u => [u, nomU(u)])].map(u => `<button class="chip ${S.unidad === u[0] ? 'on' : ''}" data-u="${u[0]}">${u[1]}</button>`).join('')}</div>` : ''}<div class="chips" style="margin-bottom:10px">${[[0, 'Todos'], ...cargosDe().map(c => [c, CARGOS[c]])].map(c => `<button class="chip ${S.cargo === c[0] ? 'on' : ''}" data-c="${c[0]}">${c[1]}</button>`).join('')}</div>
+  <div class="sticky-f"><select id="fm"><option value="">Todo el año</option>${meses}</select>${conBuscar ? `<input id="fq" placeholder="Buscar concepto, folio, categoría…" value="${esc(S.q)}">` : ''}</div>`;
+}
+function ligaFiltros(rerender) {
+  document.querySelectorAll('.chip[data-u]').forEach(b => b.onclick = () => { S.unidad = b.dataset.u; S.cargo = 0; rerender(); });
+  document.querySelectorAll('.chip[data-c]').forEach(b => b.onclick = () => { S.cargo = +b.dataset.c; rerender(); });
+  const fm = $('#fm'); if (fm) fm.onchange = e => { S.mes = e.target.value; rerender(); };
+  const q = $('#fq'); if (q) q.oninput = e => { S.q = e.target.value; clearTimeout(ligaFiltros.t); ligaFiltros.t = setTimeout(() => { rerender(); const n = $('#fq'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } }, 250); };
+}
+function bajarExcel(nombre, filas) {
+  const ws = XLSX.utils.json_to_sheet(filas); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Datos'); XLSX.writeFile(wb, nombre);
+}
+
+/* ---------- Resumen ---------- */
+function vResumen() {
+  const base = S.rows.filter(r => (!S.unidad || r.unidad === S.unidad) && (!S.cargo || r.cargo_id === S.cargo));
+  const eg = base.filter(r => r.tipo === 'EGRESO'), ing = base.filter(r => r.tipo === 'INGRESO');
+  const sum = a => a.reduce((s, r) => s + Number(r.monto), 0);
+  const te = sum(eg), ti = sum(ing);
+  const pivot = (rows, key) => {
+    const m = {}; rows.forEach(r => { const k = key(r); (m[k] = m[k] || Array(12).fill(0))[+r.fecha.slice(5, 7) - 1] += Number(r.monto); });
+    return Object.entries(m).map(([k, v]) => ({ k, v, t: v.reduce((a, b) => a + b, 0) })).sort((a, b) => b.t - a.t);
+  };
+  const tabla = (titulo, rows, key, signo) => {
+    const p = pivot(rows, key); const col = Array(12).fill(0); p.forEach(x => x.v.forEach((n, i) => col[i] += n));
+    return `<h3 style="margin:18px 0 8px">${titulo}</h3><div class="tw"><table><thead><tr><th>${titulo.startsWith('Ingresos') ? 'Cliente' : 'Categoría'}</th>${MESES.map(m => `<th class="n">${m}</th>`).join('')}<th class="n">Total</th></tr></thead><tbody>
+    ${p.map(x => `<tr><td>${esc(x.k)}</td>${x.v.map(n => `<td class="n">${n ? money(n) : ''}</td>`).join('')}<td class="n"><b>${money(x.t)}</b></td></tr>`).join('')}
+    <tr class="tot"><td>Total</td>${col.map(n => `<td class="n">${n ? money(n) : ''}</td>`).join('')}<td class="n">${money(col.reduce((a, b) => a + b, 0))}</td></tr></tbody></table></div>`;
+  };
+  $('#m').innerHTML = `${filtrosHTML(false).replace(/<div class="sticky-f">.*?<\/div>/s, '')}
+  <div class="grid"><div class="kpi"><small>Ingresos</small><b class="pos">${money(ti)}</b></div><div class="kpi"><small>Egresos (folios)</small><b class="neg">${money(te)}</b></div>
+  <div class="kpi"><small>Diferencia</small><b class="${ti - te >= 0 ? 'pos' : 'neg'}">${money(ti - te)}</b></div>
+  <div class="kpi"><small>Folios</small><b>${eg.length}</b></div></div>
+  ${tabla('Egresos por categoría', eg, r => r.categoria || 'SIN CATEGORÍA')}
+  ${tabla('Ingresos por cliente', ing, r => r.concepto)}
+  <p class="mut" style="font-size:12.5px">Platón viene del Google Sheet OFICINA PLATON; el resto es lo capturado o importado aquí.</p>`;
+  ligaFiltros(vResumen);
+}
+
+/* ---------- Folios ---------- */
+function vFolios() {
+  const rows = filtradas('EGRESO').sort((a, b) => a.cargo_id - b.cargo_id || a.folio - b.folio);
+  const tot = rows.reduce((s, r) => s + Number(r.monto), 0);
+  const conCh = rows.filter(r => S.cruce[r.cargo_id + '-' + r.folio]).length;
+  $('#m').innerHTML = `${filtrosHTML(true)}
+  <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> folios · <b>${money(tot)}</b> · <span class="mut">${conCh} con cheque en la app, ${rows.length - conCh} sin cheque (efectivo)</span></div>
+  <button class="btn sec" id="xl">Descargar Excel</button></div>
+  <div class="tw"><table><thead><tr>${S.unidad ? '' : '<th>Unidad</th>'}<th>Cargo</th><th class="n">Folio</th><th>Fecha</th><th>Concepto</th><th>Categoría</th><th class="n">Monto</th><th>Pago</th>${esAdmin() ? '<th></th>' : ''}</tr></thead><tbody>
+  ${rows.map(r => { const ch = S.cruce[r.cargo_id + '-' + r.folio]; return `<tr>${S.unidad ? '' : `<td>${nomU(r.unidad)}</td>`}<td>${CARGOS[r.cargo_id]}</td><td class="n folio">${r.folio}</td><td>${r.fecha.split('-').reverse().join('/')}</td><td class="wrap">${esc(r.concepto)}</td><td>${esc(r.categoria || '')}</td><td class="n">${money(r.monto)}</td>
+  <td>${ch ? `<span class="badge b-ok">Cheque ${esc(ch)}</span>` : '<span class="badge b-no">Sin cheque</span>'}</td>${esAdmin() ? `<td><a href="#" data-an="${r.id}" class="mut">anular</a></td>` : ''}</tr>`; }).join('')}
+  </tbody></table></div>`;
+  ligaFiltros(vFolios);
+  $('#xl').onclick = () => bajarExcel('folios_platon.xlsx', rows.map(r => ({ UNIDAD: r.unidad, FECHA: r.fecha, CARGO: CARGOS[r.cargo_id], FOLIO: r.folio, CONCEPTO: r.concepto, MONTO: Number(r.monto), CATEGORIA: r.categoria, CHEQUE: S.cruce[r.cargo_id + '-' + r.folio] || '' })));
+  document.querySelectorAll('[data-an]').forEach(a => a.onclick = async e => {
+    e.preventDefault(); const nota = prompt('Motivo para anular este folio (queda guardado, no se borra):'); if (!nota) return;
+    const { error } = await sb.rpc('platon_anular', { p_id: +a.dataset.an, p_nota: nota }); if (error) return alert(error.message);
+    await cargar(); vFolios();
+  });
+}
+
+/* ---------- Ingresos ---------- */
+function vIngresos() {
+  const rows = filtradas('INGRESO').sort((a, b) => b.fecha.localeCompare(a.fecha));
+  const tot = rows.reduce((s, r) => s + Number(r.monto), 0);
+  $('#m').innerHTML = `${filtrosHTML(true)}
+  <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> ingresos · <b class="pos">${money(tot)}</b></div><button class="btn sec" id="xl">Descargar Excel</button></div>
+  <div class="tw"><table><thead><tr>${S.unidad ? '' : '<th>Unidad</th>'}<th>Fecha</th><th>Cargo</th><th>Cliente</th><th class="n">Monto</th>${esAdmin() ? '<th></th>' : ''}</tr></thead><tbody>
+  ${rows.map(r => `<tr>${S.unidad ? '' : `<td>${nomU(r.unidad)}</td>`}<td>${r.fecha.split('-').reverse().join('/')}</td><td>${CARGOS[r.cargo_id]}</td><td class="wrap">${esc(r.concepto)}</td><td class="n">${money(r.monto)}</td>${esAdmin() ? `<td><a href="#" data-an="${r.id}" class="mut">anular</a></td>` : ''}</tr>`).join('')}
+  </tbody></table></div>`;
+  ligaFiltros(vIngresos);
+  $('#xl').onclick = () => bajarExcel('ingresos_platon.xlsx', rows.map(r => ({ UNIDAD: r.unidad, FECHA: r.fecha, CARGO: CARGOS[r.cargo_id], CLIENTE: r.concepto, MONTO: Number(r.monto) })));
+  document.querySelectorAll('[data-an]').forEach(a => a.onclick = async e => {
+    e.preventDefault(); const nota = prompt('Motivo para anular este ingreso (queda guardado, no se borra):'); if (!nota) return;
+    const { error } = await sb.rpc('platon_anular', { p_id: +a.dataset.an, p_nota: nota }); if (error) return alert(error.message);
+    await cargar(); vIngresos();
+  });
+}
+
+/* ---------- Capturar ---------- */
+const proxFolio = c => Math.max(0, ...S.rows.filter(r => r.cargo_id === c && r.tipo === 'EGRESO').map(r => r.folio)) + 1;
+function vCapturar() {
+  const f = S.cap = S.cap || { unidad: S.unidad || 'PLATON', cargo: CARGO_ID['RENE'] || +Object.keys(CARGOS)[0], tipo: 'EGRESO' };
+  const uns = [...new Set(['PLATON', ...unidades(), ...((S.cap && S.cap.extra) || [])])];
+  const cats = [...new Set(S.rows.filter(r => r.categoria).map(r => r.categoria))].sort();
+  const hoy = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  $('#m').innerHTML = `<div class="card"><div class="row" style="justify-content:space-between"><div class="seg" id="sg">${['EGRESO', 'INGRESO'].map(t => `<button data-t="${t}" class="${f.tipo === t ? 'on' : ''}">${t === 'EGRESO' ? 'Folio (egreso)' : 'Ingreso'}</button>`).join('')}</div></div>
+  <label>Unidad</label><div class="chips" id="un">${uns.map(u => `<button class="chip ${f.unidad === u ? 'on' : ''}" data-u="${u}">${nomU(u)}</button>`).join('')}<button class="chip" id="unnew">+ Nueva</button></div>
+  <label>Cargo a</label><div class="chips" id="cg">${Object.keys(CARGOS).map(Number).map(c => `<button class="chip ${f.cargo === c ? 'on' : ''}" data-c="${c}">${CARGOS[c]}</button>`).join('')}</div>
+  ${f.tipo === 'EGRESO' ? `<div class="msg info">Folio que se asignará: <b class="folio" style="font-size:20px">${proxFolio(f.cargo)}</b></div>` : ''}
+  <label>Fecha</label><input type="date" id="cf" value="${hoy}">
+  <label>${f.tipo === 'EGRESO' ? 'Concepto / descripción' : 'Cliente'}</label><input id="cc" autocomplete="off" placeholder="${f.tipo === 'EGRESO' ? 'Ej. TELCEL, RAYAS, PAPELERIA…' : 'Nombre del cliente'}">
+  ${f.tipo === 'EGRESO' ? `<label>Categoría</label><input id="ck" list="cats" autocomplete="off" placeholder="Elige o escribe"><datalist id="cats">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist>` : ''}
+  <label>Monto</label><input id="cm" type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00">
+  <div style="margin-top:14px"><button class="btn gold" id="go" style="width:100%">Guardar ${f.tipo === 'EGRESO' ? 'folio' : 'ingreso'}</button></div><div id="res"></div></div>`;
+  $('#sg').querySelectorAll('button').forEach(b => b.onclick = () => { f.tipo = b.dataset.t; vCapturar(); });
+  $('#un').querySelectorAll('button[data-u]').forEach(b => b.onclick = () => { f.unidad = b.dataset.u; vCapturar(); });
+  $('#unnew').onclick = () => { const n = (prompt('Nombre de la nueva unidad (ej. CANCUN):') || '').trim().toUpperCase(); if (n) { f.unidad = n; S.cap.extra = (S.cap.extra || []).concat(n); vCapturar(); } };
+  $('#cg').querySelectorAll('button').forEach(b => b.onclick = () => { f.cargo = +b.dataset.c; vCapturar(); });
+  $('#go').onclick = async () => {
+    const concepto = $('#cc').value.trim(), monto = parseFloat($('#cm').value), fecha = $('#cf').value;
+    if (!concepto || !(monto > 0) || !fecha) return $('#res').innerHTML = '<div class="msg err">Falta fecha, concepto o monto.</div>';
+    const b = $('#go'); b.disabled = true;
+    const { data, error } = await sb.rpc('folios_capturar', { p_unidad: f.unidad, p_cargo: f.cargo, p_tipo: f.tipo, p_fecha: fecha, p_concepto: concepto, p_categoria: f.tipo === 'EGRESO' ? ($('#ck').value || null) : null, p_monto: monto });
+    b.disabled = false;
+    if (error) return $('#res').innerHTML = `<div class="msg err">${esc(error.message)}</div>`;
+    await cargar(); vCapturar();
+    $('#res').innerHTML = `<div class="msg ok">Guardado ${f.tipo === 'EGRESO' ? 'con el folio ' + data.folio : ''} · ${money(data.monto)} · ${esc(data.concepto)}</div>`;
+  };
+}
+
+/* ---------- Importar Excel ---------- */
+const norm = s => String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toUpperCase();
+function aFecha(v) {
+  if (v == null || v === '') return null;
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  if (typeof v === 'number') { const d = new Date(Math.round((v - 25569) * 86400000)); return d.toISOString().slice(0, 10); }
+  const s = String(v).trim(); let m;
+  if ((m = s.match(/^(\d{4})-(\d{2})-(\d{2})/))) return m[0];
+  if ((m = s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/))) return `${m[3].length === 2 ? '20' + m[3] : m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+  if ((m = s.toLowerCase().match(/^(\d{1,2})[-\/ ]([a-z]{3})[a-z]*[-\/ ](\d{2,4})$/))) { const i = MESES.indexOf(m[2]); if (i >= 0) return `${m[3].length === 2 ? '20' + m[3] : m[3]}-${String(i + 1).padStart(2, '0')}-${m[1].padStart(2, '0')}`; }
+  return null;
+}
+const aNum = v => { if (typeof v === 'number') return v; const n = parseFloat(String(v == null ? '' : v).replace(/[$,\s]/g, '').replace(/^\((.*)\)$/, '-$1')); return isNaN(n) ? null : n; };
+function leerLibro(wb) {
+  const out = [];
+  wb.SheetNames.forEach(nom => {
+    const filas = XLSX.utils.sheet_to_json(wb.Sheets[nom], { header: 1, raw: true, cellDates: true, defval: null });
+    let h = filas.findIndex(r => r && r.some(c => norm(c) === 'FECHA') && r.some(c => ['MONTO', 'IMPORTE'].includes(norm(c))));
+    if (h < 0) return;
+    const cols = filas[h].map(norm); const idx = n => cols.findIndex(c => n.includes(c));
+    const iF = idx(['FECHA']), iC = idx(['CARGO', 'CARGO A']), iFo = idx(['FOLIO']), iM = idx(['MONTO', 'IMPORTE']), iT = idx(['TIPO', 'TIPO DE MOVIMIENTO']), iCat = idx(['CATEGORIA']), iU = idx(['UNIDAD']);
+    const iCo = cols.findIndex(c => ['CONCEPTO', 'CONCEPTO/DESCRIPCION', 'DESCRIPCION', 'CLIENTE'].includes(c));
+    const nn = norm(nom);
+    for (let i = h + 1; i < filas.length; i++) {
+      const r = filas[i]; if (!r) continue;
+      const fecha = aFecha(r[iF]), monto = aNum(r[iM]); if (!fecha || monto == null || monto === 0) continue;
+      if (iCo < 0 || !String(r[iCo] == null ? '' : r[iCo]).trim()) continue; // hojas resumen (p. ej. CONSOLIDADO) no traen concepto
+      let cargo = iC >= 0 ? limpia(norm(r[iC])) : (Object.values(CARGOS).find(c => nn.includes(c)) || '');
+      let tipo = iT >= 0 ? norm(r[iT]) : (nn.includes('INGRESO') ? 'INGRESO' : nn.includes('EGRESO') ? 'EGRESO' : '');
+      if (!tipo) tipo = monto < 0 ? 'EGRESO' : 'INGRESO';
+      if (!CARGO_ID[cargo]) continue; if (tipo.startsWith('EGR')) tipo = 'EGRESO'; else if (tipo.startsWith('ING')) tipo = 'INGRESO'; else continue;
+      out.push({ hoja: nom, cargo, tipo, fecha, folio: iFo >= 0 && r[iFo] != null ? parseInt(r[iFo]) || null : null, concepto: String(r[iCo] == null ? '' : r[iCo]).trim(), categoria: iCat >= 0 && r[iCat] ? String(r[iCat]).trim() : '', unidad: iU >= 0 && r[iU] ? String(r[iU]).trim().toUpperCase() : '', monto: Math.abs(monto) });
+    }
+  });
+  const ya = {}; S.rows.forEach(r => { const k = [r.cargo_id, r.tipo, r.fecha, r.concepto.trim().toUpperCase(), Number(r.monto).toFixed(2)].join('|'); ya[k] = (ya[k] || 0) + 1; });
+  out.forEach(o => { const k = [CARGO_ID[o.cargo], o.tipo, o.fecha, o.concepto.toUpperCase(), o.monto.toFixed(2)].join('|'); o.dup = ya[k] > 0; if (o.dup) ya[k]--; o.incl = !o.dup; });
+  return out;
+}
+function vImportar() {
+  const im = S.imp;
+  $('#m').innerHTML = `<div class="card"><b>Importar desde Excel</b>
+  <p class="mut" style="margin:6px 0 12px">Sube el Excel de las compañeras. Detecta solo las hojas que tengan columnas <b>FECHA, CARGO, CONCEPTO (o CLIENTE), MONTO</b> y, si las traen, <b>FOLIO, TIPO, CATEGORIA</b>. Los folios nuevos siguen la numeración de cada cargo; lo que ya existe se marca y no se duplica.</p>
+  <label>Unidad de este archivo</label><select id="iu">${[...new Set(['PLATON', ...unidades(), ...((S.cap && S.cap.extra) || [])])].map(u => `<option value="${u}" ${(S.impU || 'PLATON') === u ? 'selected' : ''}>${nomU(u)}</option>`).join('')}</select><p class="mut" style="font-size:12.5px;margin:4px 0 12px">Si el Excel trae una columna UNIDAD, se usa esa. Para una unidad nueva, créala primero en Capturar → + Nueva.</p>
+  <div class="drop"><input type="file" id="fx" accept=".xlsx,.xls,.csv"></div><div id="res"></div></div>
+  ${im ? `<div class="card"><div class="row" style="justify-content:space-between"><div><b>${im.filter(x => x.incl).length}</b> por importar · <span class="mut">${im.filter(x => x.dup).length} ya existen</span></div>
+  <button class="btn gold" id="go">Importar ${im.filter(x => x.incl).length} movimientos</button></div></div>
+  <div class="tw"><table><thead><tr><th></th><th>Hoja</th><th>Cargo</th><th>Tipo</th><th class="n">Folio</th><th>Fecha</th><th>Concepto</th><th>Categoría</th><th class="n">Monto</th><th></th></tr></thead><tbody>
+  ${im.slice(0, 400).map((x, i) => `<tr style="${x.dup ? 'opacity:.55' : ''}"><td><input type="checkbox" data-i="${i}" ${x.incl ? 'checked' : ''} style="width:auto"></td><td>${esc(x.hoja)}</td><td>${x.cargo}</td><td>${x.tipo}</td><td class="n">${x.folio || ''}</td><td>${x.fecha}</td><td class="wrap">${esc(x.concepto)}</td><td>${esc(x.categoria)}</td><td class="n">${money(x.monto)}</td><td>${x.dup ? '<span class="badge b-no">ya existe</span>' : ''}</td></tr>`).join('')}
+  </tbody></table></div>${im.length > 400 ? `<p class="mut">Se muestran las primeras 400 de ${im.length}; se importan todas las marcadas.</p>` : ''}` : ''}`;
+  $('#iu').onchange = e => S.impU = e.target.value;
+  $('#fx').onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    try { const wb = XLSX.read(await f.arrayBuffer(), { type: 'array', cellDates: true }); S.imp = leerLibro(wb); }
+    catch (er) { return $('#res').innerHTML = `<div class="msg err">No se pudo leer el archivo: ${esc(er.message)}</div>`; }
+    if (!S.imp.length) { S.imp = null; return $('#res').innerHTML = '<div class="msg err">No encontré filas con FECHA, CARGO y MONTO. Revisa los encabezados.</div>'; }
+    vImportar();
+  };
+  if (!im) return;
+  document.querySelectorAll('input[data-i]').forEach(c => c.onchange = () => { im[+c.dataset.i].incl = c.checked; vImportar(); });
+  $('#go').onclick = async () => {
+    const lista = im.filter(x => x.incl); if (!lista.length) return;
+    const b = $('#go'); b.disabled = true; let eg = 0, ig = 0; const lote = 'xls-' + new Date().toISOString().replace(/\D/g, '').slice(0, 14);
+    lista.sort((a, b) => (a.folio || 1e9) - (b.folio || 1e9));
+    for (let i = 0; i < lista.length; i += 150) {
+      b.textContent = `Importando ${Math.min(i + 150, lista.length)} de ${lista.length}…`;
+      const { data, error } = await sb.rpc('folios_importar', { p_unidad: S.impU || 'PLATON', p_filas: lista.slice(i, i + 150).map(x => ({ unidad: x.unidad, cargo: x.cargo, tipo: x.tipo, fecha: x.fecha, folio: x.folio, concepto: x.concepto, categoria: x.categoria, monto: x.monto })), p_lote: lote });
+      if (error) { b.disabled = false; b.textContent = 'Reintentar'; return $('#res').innerHTML = `<div class="msg err">${esc(error.message)} (alcanzaron a importarse ${eg + ig} antes del error. Recarga la página y vuelve a subir el mismo archivo: lo ya importado sale como «ya existe» y no se duplica)</div>`; }
+      eg += data.egresos; ig += data.ingresos;
+    }
+    S.imp = null; await cargar(); S.tab = 'folios'; shell();
+    $('#m').insertAdjacentHTML('afterbegin', `<div class="msg ok">Importado: ${eg} folios y ${ig} ingresos.</div>`);
+  };
+}
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { });
+boot();
+</script>
+</body>
+</html>
