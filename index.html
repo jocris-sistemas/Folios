@@ -346,6 +346,21 @@ function vImportar() {
   };
 }
 
+/* Actualización en vivo: revisa cada 45 s (y al volver a la pestaña) si hay folios nuevos */
+let _ref = false;
+async function refrescar() {
+  if (_ref || document.hidden || !S.perfil || !['resumen', 'folios', 'ingresos'].includes(S.tab)) return;
+  const ae = document.activeElement; if (ae && /INPUT|SELECT|TEXTAREA/.test(ae.tagName)) return;
+  _ref = true;
+  try {
+    const firma = () => S.rows.length + ':' + S.rows.reduce((m, r) => Math.max(m, r.id), 0);
+    const antes = firma(); await cargar();
+    if (firma() !== antes) { const y = window.scrollY; shell(); window.scrollTo(0, y); }
+  } catch (e) { } finally { _ref = false; }
+}
+setInterval(refrescar, 45000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refrescar(); });
+
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { });
 boot();
 </script>
