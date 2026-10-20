@@ -5,11 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#14345c">
 <link rel="manifest" href="manifest.json">
-<link rel="icon" href="icon-192.png">
-<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icon-192.png?v=2">
+<link rel="apple-touch-icon" href="icon-192.png?v=2">
 <title>Folios</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" integrity="sha384-Rj26LVGvoeRVR6+mwQmFfcR3QOBEwT+ZmuCWpuiqeTzJpCs0ER4ITAWGb4Hiy3Ok" crossorigin="anonymous"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js" integrity="sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk" crossorigin="anonymous"></script>
 <style>
 :root{--bg:#f3f5f9;--card:#fff;--ink:#17222f;--mut:#667386;--line:#dfe5ee;--pri:#14345c;--pri2:#1f4f8a;--gold:#c8962b;--ok:#18794e;--okbg:#e3f4eb;--bad:#b3261e;--badbg:#fbe9e7;--chip:#e8eef7}
 @media(prefers-color-scheme:dark){:root{--bg:#0d1520;--card:#15202e;--ink:#e6edf5;--mut:#94a3b5;--line:#25354a;--pri:#8fb6ea;--pri2:#6c9ad8;--gold:#e0b04a;--ok:#5fcf9a;--okbg:#14352a;--bad:#ff8c84;--badbg:#3a1b19;--chip:#1d2c40}}
@@ -106,6 +107,7 @@ async function cargar() {
     all = all.concat(data); if (data.length < 1000) break; from += 1000;
   }
   S.rows = all;
+  (cg || []).forEach(c => { if (!CARGOS[c.id] && all.some(r => r.cargo_id === c.id)) CARGOS[c.id] = limpia(c.nombre); });
   const cr = {};
   from = 0;
   for (;;) {
@@ -126,7 +128,7 @@ async function cargar() {
 }
 const unidades = () => [...new Set(S.rows.map(r => r.unidad))].sort();
 const cargosDe = () => [...new Set(S.rows.filter(r => !S.unidad || r.unidad === S.unidad).map(r => r.cargo_id))].sort((a, b) => (CARGOS[a] || '').localeCompare(CARGOS[b] || ''));
-const nomU = u => ({ PLATON: 'Platón', CANCUN: 'Cancún' }[u] || u.charAt(0) + u.slice(1).toLowerCase());
+const nomU = u => ({ PLATON: 'Platón', CANCUN: 'Cancún', JOCRIS: 'JOCRIS' }[u] || u.charAt(0) + u.slice(1).toLowerCase());
 const filtradas = (tipo) => S.rows.filter(r => r.tipo === tipo && (!S.unidad || r.unidad === S.unidad) && (!S.cargo || r.cargo_id === S.cargo) && (!S.mes || r.fecha.slice(5, 7) === S.mes) &&
   (!S.q || (r.concepto + ' ' + (r.categoria || '') + ' ' + (r.folio || '')).toLowerCase().includes(S.q.toLowerCase())));
 
@@ -159,7 +161,6 @@ async function boot() {
 /* ---------- estructura ---------- */
 function shell() {
   const tabs = [['resumen', 'Resumen'], ['folios', 'Folios'], ['ingresos', 'Ingresos']];
-  tabs.push(['concil', 'Conciliación']);
   if (puedeCapturar()) tabs.push(['capturar', 'Capturar'], ['importar', 'Importar Excel']);
   $('#app').innerHTML = `<header><div class="top"><h1>Folios<small>egresos e ingresos</small></h1>
     <div class="who">${esc(S.perfil.nombre || S.perfil.correo || '')}<br><a href="#" id="out" style="color:#fff">Cerrar sesión</a></div></div>
@@ -168,10 +169,11 @@ function shell() {
   $('#out').onclick = async e => { e.preventDefault(); await sb.auth.signOut(); location.reload(); };
   ({ resumen: vResumen, folios: vFolios, ingresos: vIngresos, concil: vConcil, capturar: vCapturar, importar: vImportar })[S.tab]();
 }
-function filtrosHTML(conBuscar) {
+function fijaCargo() { const cs = cargosDe(); if (!cs.includes(S.cargo)) S.cargo = cs.includes(CARGO_ID['EGBERT']) ? CARGO_ID['EGBERT'] : (cs[0] || 0); }
+function filtrosHTML(conBuscar, sinTodos) {
   const meses = MESES.map((m, i) => `<option value="${String(i + 1).padStart(2, '0')}" ${S.mes === String(i + 1).padStart(2, '0') ? 'selected' : ''}>${m}</option>`).join('');
   const us = unidades(); if (S.cargo && !cargosDe().includes(S.cargo)) S.cargo = 0;
-  return `${us.length > 1 ? `<div class="chips" style="margin-bottom:8px">${[['', 'Todas las unidades'], ...us.map(u => [u, nomU(u)])].map(u => `<button class="chip ${S.unidad === u[0] ? 'on' : ''}" data-u="${u[0]}">${u[1]}</button>`).join('')}</div>` : ''}<div class="chips" style="margin-bottom:10px">${[[0, 'Todos'], ...cargosDe().map(c => [c, CARGOS[c]])].map(c => `<button class="chip ${S.cargo === c[0] ? 'on' : ''}" data-c="${c[0]}">${c[1]}</button>`).join('')}</div>
+  return `${us.length > 1 ? `<div class="chips" style="margin-bottom:8px">${[['', 'Todas las unidades'], ...us.map(u => [u, nomU(u)])].map(u => `<button class="chip ${S.unidad === u[0] ? 'on' : ''}" data-u="${u[0]}">${u[1]}</button>`).join('')}</div>` : ''}<div class="chips" style="margin-bottom:10px">${[...(sinTodos ? [] : [[0, 'Todos']]), ...cargosDe().map(c => [c, CARGOS[c]])].map(c => `<button class="chip ${S.cargo === c[0] ? 'on' : ''}" data-c="${c[0]}">${c[1]}</button>`).join('')}</div>
   <div class="sticky-f"><select id="fm"><option value="">Todo el año</option>${meses}</select>${conBuscar ? `<input id="fq" placeholder="Buscar concepto, folio, categoría…" value="${esc(S.q)}">` : ''}</div>`;
 }
 function ligaFiltros(rerender) {
@@ -184,8 +186,57 @@ function bajarExcel(nombre, filas) {
   const ws = XLSX.utils.json_to_sheet(filas); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Datos'); XLSX.writeFile(wb, nombre);
 }
 
+/* ---------- Exportar (Excel y PDF) de lo filtrado ---------- */
+const hoyISO = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+function txtFiltros(extra) {
+  const t = [];
+  if (S.unidad) t.push('Unidad: ' + nomU(S.unidad));
+  if (S.cargo) t.push('Cargo: ' + CARGOS[S.cargo]);
+  if (S.mes) t.push('Mes: ' + MESES_L[+S.mes - 1]);
+  if (S.q) t.push('Búsqueda: ' + S.q);
+  (extra || []).forEach(x => t.push(x));
+  return 'Filtros: ' + (t.length ? t.join(' · ') : 'ninguno') + '   |   Generado: ' + hoyISO().split('-').reverse().join('/');
+}
+function bajarPDF(nombre, titulo, sub, cols, filas, pie, tam) {
+  if (!window.jspdf) return alert('No fue posible cargar el generador de PDF. Verificar la conexión a internet.');
+  const doc = new window.jspdf.jsPDF({ orientation: 'landscape', unit: 'pt', format: 'letter' });
+  const W = 792, H = 612, M = 36, fs = tam || 8, lh = fs + 3.5, pad = 3;
+  const tw = cols.reduce((a, c) => a + (c.w || 1), 0), cw = cols.map(c => (c.w || 1) / tw * (W - 2 * M));
+  let y = 0, k = 0;
+  const dibuja = (cel, modo) => {
+    doc.setFont('helvetica', modo ? 'bold' : 'normal'); doc.setFontSize(fs);
+    const lns = cel.map((t, i) => doc.splitTextToSize(String(t == null ? '' : t), cw[i] - 2 * pad));
+    const h = Math.max(...lns.map(l => l.length)) * lh + 2 * pad - 2;
+    if (modo !== 'head' && y + h > H - 40) { doc.addPage(); cab(); }
+    if (modo === 'head') { doc.setFillColor(31, 58, 95); doc.rect(M, y, W - 2 * M, h, 'F'); doc.setTextColor(255); }
+    else if (modo === 'tot') { doc.setFillColor(220, 228, 240); doc.rect(M, y, W - 2 * M, h, 'F'); doc.setTextColor(20); }
+    else { if (k++ % 2) { doc.setFillColor(244, 246, 250); doc.rect(M, y, W - 2 * M, h, 'F'); } doc.setTextColor(30); }
+    let x = M;
+    lns.forEach((l, i) => { if (cols[i].n) doc.text(l, x + cw[i] - pad, y + pad + fs - 1, { align: 'right' }); else doc.text(l, x + pad, y + pad + fs - 1); x += cw[i]; });
+    y += h;
+  };
+  const cab = () => {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(20); doc.text(titulo, M, 34);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(90);
+    const sl = doc.splitTextToSize(sub, W - 2 * M); doc.text(sl, M, 48); y = 48 + sl.length * 10 + 4; dibuja(cols.map(c => c.t), 'head');
+  };
+  cab();
+  filas.forEach(f => {
+    if (f && f.sec) { if (y + 30 > H - 40) { doc.addPage(); cab(); } y += 6; doc.setFont('helvetica', 'bold'); doc.setFontSize(fs + 2); doc.setTextColor(31, 58, 95); doc.text(f.sec, M, y + 10); y += 16; k = 0; }
+    else if (f && f.tot) dibuja(f.tot, 'tot'); else dibuja(f);
+  });
+  if (pie) dibuja(pie, 'tot');
+  const n = doc.getNumberOfPages();
+  for (let i = 1; i <= n; i++) { doc.setPage(i); doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(120); doc.text('Página ' + i + ' de ' + n, W - M, H - 20, { align: 'right' }); }
+  doc.save(nombre);
+}
+const pagoTxt = r => { const ch = S.cruce[r.cargo_id + '-' + r.folio], md = (S.medio || {})[r.id]; return ch ? 'Cheque ' + ch : md ? (md.medio === 'EFECTIVO' ? 'Efectivo' : md.medio) : 'Sin asignar'; };
+const pagoTipo = r => S.cruce[r.cargo_id + '-' + r.folio] ? 'CHEQUE' : ((S.medio || {})[r.id] ? 'EFECTIVO' : 'SIN');
+const fFecha = f => f.split('-').reverse().join('/');
+
 /* ---------- Resumen ---------- */
 function vResumen() {
+  fijaCargo();
   const base = S.rows.filter(r => (!S.unidad || r.unidad === S.unidad) && (!S.cargo || r.cargo_id === S.cargo));
   const eg = base.filter(r => r.tipo === 'EGRESO'), ing = base.filter(r => r.tipo === 'INGRESO');
   const sum = a => a.reduce((s, r) => s + Number(r.monto), 0);
@@ -200,30 +251,68 @@ function vResumen() {
     ${p.map(x => `<tr><td>${esc(x.k)}</td>${x.v.map(n => `<td class="n">${n ? money(n) : ''}</td>`).join('')}<td class="n"><b>${money(x.t)}</b></td></tr>`).join('')}
     <tr class="tot"><td>Total</td>${col.map(n => `<td class="n">${n ? money(n) : ''}</td>`).join('')}<td class="n">${money(col.reduce((a, b) => a + b, 0))}</td></tr></tbody></table></div>`;
   };
-  $('#m').innerHTML = `${filtrosHTML(false).replace(/<div class="sticky-f">.*?<\/div>/s, '')}
-  <div class="grid"><div class="kpi"><small>Ingresos</small><b class="pos">${money(ti)}</b></div><div class="kpi"><small>Egresos (folios)</small><b class="neg">${money(te)}</b></div>
-  <div class="kpi"><small>Diferencia</small><b class="${ti - te >= 0 ? 'pos' : 'neg'}">${money(ti - te)}</b></div>
-  <div class="kpi"><small>Folios</small><b>${eg.length}</b></div></div>
+  $('#m').innerHTML = `${filtrosHTML(false, true).replace(/<div class="sticky-f">.*?<\/div>/s, '')}
+  <div class="row" style="margin:6px 0;gap:8px"><button class="btn sec" id="xl">Descargar Excel</button><button class="btn sec" id="pdf">Descargar PDF</button></div>
   ${tabla('Egresos por categoría', eg, r => r.categoria || 'SIN CATEGORÍA')}
   ${tabla('Ingresos por cliente', ing, r => r.concepto)}
   <p class="mut" style="font-size:12.5px">Fuente: Platón, Google Sheet OFICINA PLATON; demás unidades, registros capturados o importados en el sistema.</p>`;
   ligaFiltros(vResumen);
+  const tE = pivot(eg, r => r.categoria || 'SIN CATEGORÍA'), tI = pivot(ing, r => r.concepto);
+  const colTot = p => { const c = Array(12).fill(0); p.forEach(x => x.v.forEach((n, i) => c[i] += n)); return c; };
+  const nom = 'resumen_' + (S.cargo ? CARGOS[S.cargo] + '_' : '') + hoyISO();
+  $('#xl').onclick = () => {
+    const wb = XLSX.utils.book_new();
+    [['Egresos por categoría', tE], ['Ingresos por cliente', tI]].forEach(([t, p]) => {
+      const c = colTot(p), filas = p.map(x => { const o = { CONCEPTO: x.k }; MESES.forEach((m, i) => o[m.toUpperCase()] = x.v[i] || 0); o.TOTAL = x.t; return o; });
+      const o = { CONCEPTO: 'TOTAL' }; MESES.forEach((m, i) => o[m.toUpperCase()] = c[i]); o.TOTAL = c.reduce((a, b) => a + b, 0); filas.push(o);
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas), t.slice(0, 31));
+    });
+    XLSX.writeFile(wb, nom + '.xlsx');
+  };
+  $('#pdf').onclick = () => {
+    const cols = [{ t: 'Concepto', w: 3.2 }, ...MESES.map(m => ({ t: m.toUpperCase(), w: 1.5, n: 1 })), { t: 'Total', w: 1.8, n: 1 }];
+    const f2 = n => n ? Number(n).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
+    const filas = [];
+    [['Egresos por categoría', tE], ['Ingresos por cliente', tI]].forEach(([t, p]) => {
+      filas.push({ sec: t }); p.forEach(x => filas.push([x.k, ...x.v.map(f2), f2(x.t)]));
+      const c = colTot(p); filas.push({ tot: ['Total', ...c.map(f2), f2(c.reduce((a, b) => a + b, 0))] });
+    });
+    bajarPDF(nom + '.pdf', 'Resumen de folios', txtFiltros(), cols, filas, null, 6.5);
+  };
 }
 
 /* ---------- Folios ---------- */
 function vFolios() {
-  const rows = filtradas('EGRESO').sort((a, b) => a.cargo_id - b.cargo_id || a.folio - b.folio);
+  fijaCargo();
+  const FF = S.ff = S.ff || { p: '', c: '', d: '', h: '' };
+  const todas = filtradas('EGRESO').sort((a, b) => a.cargo_id - b.cargo_id || a.folio - b.folio);
+  const cats = [...new Set(todas.map(r => r.categoria || 'SIN CATEGORÍA'))].sort();
+  const rows = todas.filter(r => (!FF.p || pagoTipo(r) === FF.p) && (!FF.c || (r.categoria || 'SIN CATEGORÍA') === FF.c) && (!FF.d || r.fecha >= FF.d) && (!FF.h || r.fecha <= FF.h));
   const tot = rows.reduce((s, r) => s + Number(r.monto), 0);
   const conCh = rows.filter(r => S.cruce[r.cargo_id + '-' + r.folio]).length, conEf = rows.filter(r => !S.cruce[r.cargo_id + '-' + r.folio] && (S.medio || {})[r.id]).length;
-  $('#m').innerHTML = `${filtrosHTML(true)}
+  $('#m').innerHTML = `${filtrosHTML(true, true)}
+  <div class="sticky-f"><select id="ffp"><option value="">Pago: todos</option>${[['CHEQUE', 'Con cheque'], ['EFECTIVO', 'En efectivo'], ['SIN', 'Sin asignar']].map(o => `<option value="${o[0]}" ${FF.p === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('')}</select>
+  <select id="ffc"><option value="">Categoría: todas</option>${cats.map(c => `<option ${FF.c === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
+  <input type="date" id="ffd" value="${FF.d}" title="Desde"><input type="date" id="ffh" value="${FF.h}" title="Hasta"><button class="btn sec" id="ffl">Limpiar filtros</button></div>
   <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> folios · <b>${money(tot)}</b> · <span class="mut">${conCh} con cheque, ${conEf} en efectivo, ${rows.length - conCh - conEf} sin asignar</span></div>
-  <button class="btn sec" id="xl">Descargar Excel</button></div>
+  <div class="row" style="gap:8px"><button class="btn sec" id="xl">Descargar Excel</button><button class="btn sec" id="pdf">Descargar PDF</button></div></div>
   <div class="tw"><table><thead><tr>${S.unidad ? '' : '<th>Unidad</th>'}<th>Cargo</th><th class="n">Folio</th><th>Fecha</th><th>Concepto</th><th>Categoría</th><th class="n">Monto</th><th>Pago</th>${esAdmin() ? '<th></th>' : ''}</tr></thead><tbody>
   ${rows.map(r => { const ch = S.cruce[r.cargo_id + '-' + r.folio]; return `<tr>${S.unidad ? '' : `<td>${nomU(r.unidad)}</td>`}<td>${CARGOS[r.cargo_id]}</td><td class="n folio">${r.folio}</td><td>${r.fecha.split('-').reverse().join('/')}</td><td class="wrap">${esc(r.concepto)}</td><td>${esc(r.categoria || '')}</td><td class="n">${money(r.monto)}</td>
   <td>${ch ? `<span class="badge b-ok">Cheque ${esc(ch)}</span>` : (S.medio || {})[r.id] ? `<span class="badge b-ok" title="${esc(S.medio[r.id].referencia || '')}">${S.medio[r.id].medio === 'EFECTIVO' ? 'Efectivo' : esc(S.medio[r.id].medio)}</span>` : '<span class="badge b-no">Sin asignar</span>'}</td>${esAdmin() ? `<td><a href="#" data-an="${r.id}" class="mut">Anular</a></td>` : ''}</tr>`; }).join('')}
   </tbody></table></div>`;
   ligaFiltros(vFolios);
-  $('#xl').onclick = () => bajarExcel('folios_platon.xlsx', rows.map(r => ({ UNIDAD: r.unidad, FECHA: r.fecha, CARGO: CARGOS[r.cargo_id], FOLIO: r.folio, CONCEPTO: r.concepto, MONTO: Number(r.monto), CATEGORIA: r.categoria, CHEQUE: S.cruce[r.cargo_id + '-' + r.folio] || '', MEDIO: S.cruce[r.cargo_id + '-' + r.folio] ? 'CHEQUE' : ((S.medio || {})[r.id] || {}).medio || '', REFERENCIA: ((S.medio || {})[r.id] || {}).referencia || '' })));
+  const bind = (id, k) => { const e = $(id); if (e) e.onchange = ev => { FF[k] = ev.target.value; vFolios(); }; };
+  bind('#ffp', 'p'); bind('#ffc', 'c'); bind('#ffd', 'd'); bind('#ffh', 'h');
+  $('#ffl').onclick = () => { S.ff = { p: '', c: '', d: '', h: '' }; S.q = ''; S.mes = ''; vFolios(); };
+  const extraF = () => [FF.p && 'Pago: ' + ({ CHEQUE: 'con cheque', EFECTIVO: 'en efectivo', SIN: 'sin asignar' }[FF.p]), FF.c && 'Categoría: ' + FF.c, FF.d && 'Desde: ' + fFecha(FF.d), FF.h && 'Hasta: ' + fFecha(FF.h)].filter(Boolean);
+  const nomF = 'folios_' + (S.unidad ? S.unidad + '_' : '') + (S.cargo ? CARGOS[S.cargo] + '_' : '') + hoyISO();
+  $('#xl').onclick = () => { const f = rows.map(r => ({ UNIDAD: r.unidad, FECHA: r.fecha, CARGO: CARGOS[r.cargo_id], FOLIO: r.folio, CONCEPTO: r.concepto, CATEGORIA: r.categoria || '', MONTO: Number(r.monto), PAGO: pagoTxt(r), REFERENCIA: ((S.medio || {})[r.id] || {}).referencia || '' })); f.push({ CONCEPTO: 'TOTAL', MONTO: tot }); bajarExcel(nomF + '.xlsx', f); };
+  $('#pdf').onclick = () => {
+    const cols = [...(S.unidad ? [] : [{ t: 'Unidad', w: 1 }]), { t: 'Cargo', w: 1.2 }, { t: 'Folio', w: .7, n: 1 }, { t: 'Fecha', w: 1 }, { t: 'Concepto', w: 4.2 }, { t: 'Categoría', w: 1.9 }, { t: 'Monto', w: 1.4, n: 1 }, { t: 'Pago', w: 1.6 }];
+    const filas = rows.map(r => [...(S.unidad ? [] : [nomU(r.unidad)]), CARGOS[r.cargo_id], r.folio, fFecha(r.fecha), r.concepto, r.categoria || '', money(r.monto), pagoTxt(r)]);
+    const pie = cols.map((c, i) => i === cols.length - 3 ? 'TOTAL' : i === cols.length - 2 ? money(tot) : '');
+    bajarPDF(nomF + '.pdf', 'Folios (' + rows.length + ')', txtFiltros(extraF()), cols, filas, pie);
+  };
   document.querySelectorAll('[data-an]').forEach(a => a.onclick = async e => {
     e.preventDefault(); const nota = prompt('Motivo de anulación del folio (el registro se conserva):'); if (!nota) return;
     const { error } = await sb.rpc('platon_anular', { p_id: +a.dataset.an, p_nota: nota }); if (error) return alert(error.message);
@@ -236,12 +325,18 @@ function vIngresos() {
   const rows = filtradas('INGRESO').sort((a, b) => b.fecha.localeCompare(a.fecha));
   const tot = rows.reduce((s, r) => s + Number(r.monto), 0);
   $('#m').innerHTML = `${filtrosHTML(true)}
-  <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> ingresos · <b class="pos">${money(tot)}</b></div><button class="btn sec" id="xl">Descargar Excel</button></div>
+  <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> ingresos · <b class="pos">${money(tot)}</b></div><div class="row" style="gap:8px"><button class="btn sec" id="xl">Descargar Excel</button><button class="btn sec" id="pdf">Descargar PDF</button></div></div>
   <div class="tw"><table><thead><tr>${S.unidad ? '' : '<th>Unidad</th>'}<th>Fecha</th><th>Cargo</th><th>Cliente</th><th class="n">Monto</th>${esAdmin() ? '<th></th>' : ''}</tr></thead><tbody>
   ${rows.map(r => `<tr>${S.unidad ? '' : `<td>${nomU(r.unidad)}</td>`}<td>${r.fecha.split('-').reverse().join('/')}</td><td>${CARGOS[r.cargo_id]}</td><td class="wrap">${esc(r.concepto)}</td><td class="n">${money(r.monto)}</td>${esAdmin() ? `<td><a href="#" data-an="${r.id}" class="mut">Anular</a></td>` : ''}</tr>`).join('')}
   </tbody></table></div>`;
   ligaFiltros(vIngresos);
-  $('#xl').onclick = () => bajarExcel('ingresos_platon.xlsx', rows.map(r => ({ UNIDAD: r.unidad, FECHA: r.fecha, CARGO: CARGOS[r.cargo_id], CLIENTE: r.concepto, MONTO: Number(r.monto) })));
+  const nomI = 'ingresos_' + (S.unidad ? S.unidad + '_' : '') + (S.cargo ? CARGOS[S.cargo] + '_' : '') + hoyISO();
+  $('#xl').onclick = () => { const f = rows.map(r => ({ UNIDAD: r.unidad, FECHA: r.fecha, CARGO: CARGOS[r.cargo_id], CLIENTE: r.concepto, MONTO: Number(r.monto) })); f.push({ CLIENTE: 'TOTAL', MONTO: tot }); bajarExcel(nomI + '.xlsx', f); };
+  $('#pdf').onclick = () => {
+    const cols = [...(S.unidad ? [] : [{ t: 'Unidad', w: 1 }]), { t: 'Fecha', w: 1 }, { t: 'Cargo', w: 1.4 }, { t: 'Cliente', w: 5 }, { t: 'Monto', w: 1.5, n: 1 }];
+    const filas = rows.map(r => [...(S.unidad ? [] : [nomU(r.unidad)]), fFecha(r.fecha), CARGOS[r.cargo_id], r.concepto, money(r.monto)]);
+    bajarPDF(nomI + '.pdf', 'Ingresos (' + rows.length + ')', txtFiltros(), cols, filas, cols.map((c, i) => i === cols.length - 2 ? 'TOTAL' : i === cols.length - 1 ? money(tot) : ''));
+  };
   document.querySelectorAll('[data-an]').forEach(a => a.onclick = async e => {
     e.preventDefault(); const nota = prompt('Motivo de anulación del ingreso (el registro se conserva):'); if (!nota) return;
     const { error } = await sb.rpc('platon_anular', { p_id: +a.dataset.an, p_nota: nota }); if (error) return alert(error.message);
