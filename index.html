@@ -151,13 +151,14 @@ async function boot() {
 /* ---------- estructura ---------- */
 function shell() {
   const tabs = [['resumen', 'Resumen'], ['folios', 'Folios'], ['ingresos', 'Ingresos']];
+  tabs.push(['concil', 'Conciliación']);
   if (puedeCapturar()) tabs.push(['capturar', 'Capturar'], ['importar', 'Importar Excel']);
   $('#app').innerHTML = `<header><div class="top"><h1>Folios<small>egresos e ingresos</small></h1>
     <div class="who">${esc(S.perfil.nombre || S.perfil.correo || '')}<br><a href="#" id="out" style="color:#fff">Cerrar sesión</a></div></div>
     <nav>${tabs.map(t => `<button data-t="${t[0]}" class="${S.tab === t[0] ? 'on' : ''}">${t[1]}</button>`).join('')}</nav></header><main id="m"></main>`;
   document.querySelectorAll('nav button').forEach(b => b.onclick = () => { S.tab = b.dataset.t; shell(); });
   $('#out').onclick = async e => { e.preventDefault(); await sb.auth.signOut(); location.reload(); };
-  ({ resumen: vResumen, folios: vFolios, ingresos: vIngresos, capturar: vCapturar, importar: vImportar })[S.tab]();
+  ({ resumen: vResumen, folios: vFolios, ingresos: vIngresos, concil: vConcil, capturar: vCapturar, importar: vImportar })[S.tab]();
 }
 function filtrosHTML(conBuscar) {
   const meses = MESES.map((m, i) => `<option value="${String(i + 1).padStart(2, '0')}" ${S.mes === String(i + 1).padStart(2, '0') ? 'selected' : ''}>${m}</option>`).join('');
@@ -494,6 +495,306 @@ function vImportar() {
     S.imp = null; await cargar(); vImportar();
     $('#res').innerHTML = `<div class="msg ok">Importación concluida: ${tot.nuevos} movimiento(s) nuevo(s) y ${tot.cambios} folio(s) actualizado(s).${tot.omitidos.length ? `<br><b>Registros no guardados (${tot.omitidos.length}):</b><br>${tot.omitidos.map(esc).join('<br>')}` : ''}</div>`;
   };
+}
+
+/* ---------- Conciliación de ingresos: banco (CSV) y archivo PAGOS de la oficina ---------- */
+const P = { pagos: [], dep: null, imp: null, vista: 'resumen', cargo: 0, mes: '', est: '', q: '', sel: null, prop: null, cargado: false, ok: '' };
+const ING_N = ['EGBERT', 'OMAR', 'RENE'];
+const ingIds = () => ING_N.map(n => CARGO_ID[n]).filter(Boolean);
+const puedeConciliar = () => S.perfil && ['administrador', 'contador'].includes(S.perfil.rol);
+const fdm = f => f ? f.split('-').reverse().join('/') : 'sin fecha';
+const c100 = n => Math.round(Number(n) * 100);
+const mesDe = f => f && f.slice(0, 4) === '2026' ? f.slice(5, 7) : '00';
+const dias = (a, b) => Math.abs((new Date(a + 'T12:00:00Z') - new Date(b + 'T12:00:00Z')) / 864e5);
+async function cargarPagos() {
+  let all = [], from = 0;
+  for (;;) {
+    const { data, error } = await sb.from('platon_pagos').select('*').eq('activo', true).order('id').range(from, from + 999);
+    if (error) throw error;
+    all = all.concat(data); if (data.length < 1000) break; from += 1000;
+  }
+  P.pagos = all.map(p => ({ ...p, total: Number(p.total) }));
+  let d = []; from = 0;
+  for (;;) {
+    const { data, error } = await sb.from('ingresos').select('id,fecha,monto,pagador,concepto,categoria').in('categoria', ING_N).order('fecha').range(from, from + 999);
+    if (error) { d = null; break; }
+    d = d.concat(data); if (data.length < 1000) break; from += 1000;
+  }
+  P.dep = d && d.length ? d.map(x => ({ ...x, monto: Number(x.monto), cargo_id: CARGO_ID[x.categoria] })).filter(x => x.cargo_id) : null;
+  P.cargado = true;
+}
+const ligadoPor = () => { const m = {}; P.pagos.forEach(p => { if (p.deposito_id) m[p.deposito_id] = (m[p.deposito_id] || 0) + c100(p.total); }); return m; };
+
+/* Lectura del archivo PAGOS: una hoja por mes y un bloque por ingeniero (FECHA, FAC., CLIENTE, IMPORTE, I.V.A, TOTAL) */
+function leerPagos(wb) {
+  const res = { filas: [], errores: [], avisos: [], ignorados: [] };
+  wb.SheetNames.forEach(hoja => {
+    const filas = XLSX.utils.sheet_to_json(wb.Sheets[hoja], { header: 1, raw: true, defval: null, blankrows: true });
+    const mesHoja = MESES_L.findIndex(m => norm(hoja).includes(m));
+    let cargo = 0, nombre = '', c = null, suma = 0, n = 0, total = null;
+    const cierra = () => { if (c && n && total != null && Math.abs(r2(suma) - r2(total)) > 0.02) res.avisos.push(`Hoja ${hoja}: la suma de las facturas de ${nombre} (${money(suma)}) no coincide con el TOTAL del Excel (${money(total)}).`); c = null; suma = 0; n = 0; total = null; };
+    filas.forEach((r, i) => {
+      if (!r) return; const fila = i + 1, textos = r.map(x => typeof x === 'string' ? norm(x) : '');
+      if (textos.includes('FECHA') && textos.includes('TOTAL')) {
+        cierra();
+        const col = (...ns) => textos.findIndex(t => ns.includes(t.replace(/[. ]/g, '')));
+        c = { f: textos.indexOf('FECHA'), fa: textos.findIndex(t => t.startsWith('FAC')), cl: textos.indexOf('CLIENTE'), im: col('IMPORTE'), iv: col('IVA'), t: textos.indexOf('TOTAL') };
+        if (!cargo || c.fa < 0 || c.cl < 0) { res.ignorados.push(`Hoja ${hoja}, fila ${fila}: tabla sin ingeniero reconocido o sin columnas FAC. y CLIENTE; no se importa.`); c = null; }
+        return;
+      }
+      if (r.every(vacio)) return;
+      const tt = textos.findIndex(t => t.startsWith('TOTAL'));
+      if (tt >= 0) { if (c) { const v = aNum(r[c.t]); if (v != null) total = v; } cierra(); return; }
+      if (!c) {
+        const t0 = textos.slice(0, 3).findIndex(t => t && cargoEnTexto(t));
+        if (t0 >= 0 && aFecha(r[t0]) == null) { cargo = cargoEnTexto(textos[t0]); nombre = CARGOS[cargo] || ''; }
+        return;
+      }
+      const fecha = aFecha(r[c.f]), fac = vacio(r[c.fa]) ? null : aNum(r[c.fa]), tot = aNum(r[c.t]);
+      const cliente = vacio(r[c.cl]) ? '' : String(r[c.cl]).replace(/\s+/g, ' ').trim();
+      const imp = c.im >= 0 ? aNum(r[c.im]) : null, iva = c.iv >= 0 ? aNum(r[c.iv]) : null;
+      const extra = r.slice(c.t + 1).filter(x => typeof x === 'string' && x.trim()).map(x => x.trim()).join(' | ');
+      const donde = `Hoja ${hoja}, fila ${fila}`;
+      if (vacio(r[c.f]) && fac == null && !cliente && (!tot)) return;
+      const err = [];
+      if (tot == null) err.push(vacio(r[c.t]) ? 'falta el total' : `total no válido («${r[c.t]}»)`);
+      else if (tot <= 0) err.push('total en cero o negativo');
+      if (!vacio(r[c.fa]) && !(fac > 0 && Number.isInteger(fac))) err.push(`número de factura no válido («${r[c.fa]}»)`);
+      if (!cliente) err.push('falta el cliente');
+      if (err.length) { res.errores.push(`${donde} (${nombre}${fac ? ' factura ' + fac : ''}): ${err.join(', ')}.`); return; }
+      suma += tot; n++;
+      if (!fecha) res.avisos.push(`${donde}: la factura ${fac || 'sin número'} no tiene fecha válida; se importa sin fecha.`);
+      else if (fecha.slice(0, 4) !== '2026') res.avisos.push(`${donde}: la factura ${fac || 'sin número'} tiene fecha ${fdm(fecha)} (otro año) y se encuentra en la hoja ${hoja}; se importa con la fecha registrada.`);
+      else if (mesHoja >= 0 && +fecha.slice(5, 7) !== mesHoja + 1) res.avisos.push(`${donde}: la factura ${fac || 'sin número'} tiene fecha de ${MESES_L[+fecha.slice(5, 7) - 1].toLowerCase()} y se encuentra en la hoja ${hoja}.`);
+      if (imp != null && iva != null && Math.abs(imp + iva - tot) > 0.05) res.avisos.push(`${donde}: importe más IVA (${money(imp + iva)}) no coincide con el total (${money(tot)}) de la factura ${fac || 'sin número'}.`);
+      if (!fac) res.avisos.push(`${donde}: «${cliente}» sin número de factura (${money(tot)}).`);
+      res.filas.push({ hoja, fila, cargo_id: cargo, fecha, factura: fac, cliente, importe: imp == null ? null : r2(imp), iva: iva == null ? null : r2(iva), total: r2(tot), nota: extra });
+    });
+    cierra();
+  });
+  const vistos = {};
+  res.filas.forEach(f => { if (f.factura) (vistos[f.factura] = vistos[f.factura] || []).push(f); });
+  Object.values(vistos).filter(a => a.length > 1).forEach(a => {
+    const igual = a.every(x => x.cargo_id === a[0].cargo_id && x.total === a[0].total);
+    const lugares = a.map(f => 'hoja ' + f.hoja + ' fila ' + f.fila).join(', ');
+    if (igual) { a.slice(1).forEach(f => f.rep = true); res.avisos.push(`La factura ${a[0].factura} aparece ${a.length} veces con los mismos datos (${lugares}); se importa una sola vez.`); }
+    else { a.forEach(f => f.rep = true); res.errores.push(`La factura ${a[0].factura} aparece ${a.length} veces con datos distintos (${lugares}). Ninguno de esos renglones se importa hasta corregir el archivo.`); }
+  });
+  res.filas = res.filas.filter(f => !f.rep);
+  return res;
+}
+function compararPagos(res) {
+  const porF = {}, sinF = {};
+  P.pagos.forEach(p => { if (p.factura) porF[p.factura] = p; else sinF[[p.cargo_id, p.fecha || '', norm(p.cliente), p.total.toFixed(2)].join('|')] = p; });
+  const nuevos = [], iguales = [], cambios = [];
+  res.filas.forEach(f => {
+    const a = f.factura ? porF[f.factura] : sinF[[f.cargo_id, f.fecha || '', norm(f.cliente), f.total.toFixed(2)].join('|')];
+    if (!a) { nuevos.push({ ...f, incl: true }); return; }
+    const dif = [];
+    if (a.cargo_id !== f.cargo_id) dif.push(['Ingeniero', CARGOS[a.cargo_id], CARGOS[f.cargo_id], a.deposito_id ? 'La factura está conciliada; al cambiar el ingeniero se desliga del depósito.' : '']);
+    if ((a.fecha || '') !== (f.fecha || '')) dif.push(['Fecha', fdm(a.fecha), fdm(f.fecha)]);
+    if (Math.abs(a.total - f.total) > 0.004) dif.push(['Total', money(a.total), money(f.total), a.deposito_id ? 'La factura está conciliada; al cambiar el total se desliga del depósito.' : '']);
+    if (dif.length) cambios.push({ ...f, id: a.id, dif, incl: false }); else iguales.push(f);
+  });
+  const enArchivo = new Set(res.filas.filter(f => f.factura).map(f => f.factura));
+  const soloApp = P.pagos.filter(p => p.factura && !enArchivo.has(p.factura));
+  nuevos.sort((a, b) => a.cargo_id - b.cargo_id || (a.fecha || '').localeCompare(b.fecha || ''));
+  return { ...res, nuevos, iguales, cambios, soloApp, vista: cambios.length ? 'cambios' : 'nuevos' };
+}
+
+/* Búsqueda de coincidencias: combinaciones de facturas del mismo ingeniero cuya suma iguala el saldo del depósito */
+function subconjunto(items, objetivo, maxN) {
+  const a = items.slice().sort((x, y) => y.c - x.c), suf = new Array(a.length + 1).fill(0);
+  for (let i = a.length - 1; i >= 0; i--) suf[i] = suf[i + 1] + a[i].c;
+  let pasos = 0, hallado = null;
+  const rec = (i, rest, pick) => {
+    if (hallado || pasos++ > 200000) return;
+    if (rest === 0) { hallado = pick.slice(); return; }
+    if (i >= a.length || pick.length >= maxN || rest < 0 || rest > suf[i]) return;
+    pick.push(a[i]); rec(i + 1, rest - a[i].c, pick); pick.pop(); rec(i + 1, rest, pick);
+  };
+  rec(0, objetivo, []); return hallado;
+}
+function proponer() {
+  const lig = ligadoPor(), usados = new Set(), out = [];
+  const libres = P.pagos.filter(p => !p.deposito_id && p.fecha);
+  const deps = P.dep.map(d => ({ ...d, rest: c100(d.monto) - (lig[d.id] || 0) })).filter(d => d.rest > 0 && d.cargo_id);
+  [['Misma fecha', 0, 12, true], ['Fecha cercana (±5 días)', 5, 6, true], ['Mismo mes', 31, 4, false]].forEach(([crit, dd, maxN, marca]) => {
+    deps.forEach(d => {
+      if (d.hecho) return;
+      const cand = libres.filter(p => !usados.has(p.id) && p.cargo_id === d.cargo_id && dias(p.fecha, d.fecha) <= dd);
+      const s = subconjunto(cand.map(p => ({ id: p.id, c: c100(p.total) })), d.rest, maxN);
+      if (s && s.length) { s.forEach(x => usados.add(x.id)); d.hecho = true; out.push({ dep: d, ids: s.map(x => x.id), crit, incl: marca }); }
+    });
+  });
+  return out;
+}
+
+
+/* ---------- Vista ---------- */
+async function vConcil() {
+  if (!P.cargado) {
+    $('#m').innerHTML = '<div class="msg info">Cargando…</div>';
+    try { await cargarPagos(); } catch (e) { return $('#m').innerHTML = `<div class="msg err">No fue posible cargar la información: ${esc(e.message || e)}</div>`; }
+  }
+  const banco = !!P.dep, vistas = [['resumen', 'Resumen mensual'], ['facturas', 'Facturas']];
+  if (banco) vistas.push(['depositos', 'Depósitos del banco']);
+  if (puedeCapturar()) vistas.push(['subir', 'Subir archivo PAGOS']);
+  if (!vistas.some(v => v[0] === P.vista)) P.vista = 'resumen';
+  const lig = ligadoPor(), nPend = P.pagos.filter(p => !p.deposito_id).length;
+  const filtroC = `<div class="chips" style="margin-bottom:10px">${[[0, 'Todos'], ...ingIds().map(c => [c, CARGOS[c]])].map(c => `<button class="chip ${P.cargo === c[0] ? 'on' : ''}" data-pc="${c[0]}">${c[1]}</button>`).join('')}</div>`;
+  const mesesOpt = `<select id="pm"><option value="">Todo el año</option>${MESES.map((m, i) => { const v = String(i + 1).padStart(2, '0'); return `<option value="${v}" ${P.mes === v ? 'selected' : ''}>${m}</option>`; }).join('')}</select>`;
+  let cuerpo = '';
+  if (P.vista === 'resumen') {
+    const fil = x => !P.cargo || x.cargo_id === P.cargo, M = {};
+    const g = k => M[k] || (M[k] = { a: 0, b: 0, pn: 0, pt: 0 });
+    P.pagos.filter(fil).forEach(p => { const m = g(mesDe(p.fecha)); m.a += c100(p.total); if (!p.deposito_id) { m.pn++; m.pt += c100(p.total); } });
+    if (banco) P.dep.filter(fil).forEach(d => { g(mesDe(d.fecha)).b += c100(d.monto); });
+    const ks = Object.keys(M).sort(), T = { a: 0, b: 0, pn: 0, pt: 0 };
+    ks.forEach(k => { for (const q in T) T[q] += M[k][q]; });
+    const fila = (n, m, cls) => `<tr class="${cls || ''}"><td>${n}</td><td class="n">${money(m.a / 100)}</td>${banco ? `<td class="n">${money(m.b / 100)}</td><td class="n ${m.a === m.b ? '' : 'neg'}">${m.a === m.b ? '—' : money((m.a - m.b) / 100)}</td>` : ''}<td class="n">${m.pn ? `${m.pn} · ${money(m.pt / 100)}` : '—'}</td></tr>`;
+    cuerpo = `${filtroC}<div class="tw"><table><thead><tr><th>Mes</th><th class="n">Archivo PAGOS</th>${banco ? '<th class="n">Banco</th><th class="n">Diferencia</th>' : ''}<th class="n">Facturas sin depósito</th></tr></thead><tbody>
+      ${ks.map(k => fila(k === '00' ? 'Sin fecha u otro año' : MESES[+k - 1], M[k])).join('')}${fila('Total', T, 'tot')}</tbody></table></div>
+      <p class="mut" style="font-size:12.5px">Archivo PAGOS: total con IVA de las facturas registradas. ${banco ? 'Banco: depósitos clasificados por ingeniero.' : 'El detalle del banco requiere un perfil con acceso a ingresos.'}</p>`;
+  } else if (P.vista === 'facturas') {
+    const q = P.q.toLowerCase(), dm = {}; if (banco) P.dep.forEach(d => dm[d.id] = d);
+    const rows = P.pagos.filter(p => (!P.cargo || p.cargo_id === P.cargo) && (!P.mes || mesDe(p.fecha) === P.mes) && (!P.est || (P.est === 'pend') === !p.deposito_id) && (!q || ((p.cliente || '') + ' ' + (p.factura || '')).toLowerCase().includes(q)))
+      .sort((a, b) => (b.fecha || '').localeCompare(a.fecha || '') || b.id - a.id);
+    const tot = rows.reduce((s, p) => s + c100(p.total), 0);
+    cuerpo = `${filtroC}<div class="sticky-f">${mesesOpt}<select id="pe"><option value="">Todas</option><option value="pend" ${P.est === 'pend' ? 'selected' : ''}>Sin depósito</option><option value="ok" ${P.est === 'ok' ? 'selected' : ''}>Conciliadas</option></select><input id="pq" placeholder="Buscar cliente o factura…" value="${esc(P.q)}"></div>
+      <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> facturas · <b>${money(tot / 100)}</b></div><button class="btn sec" id="pxl">Descargar Excel</button></div>
+      <div class="tw"><table><thead><tr><th>Fecha</th><th class="n">Factura</th><th>Ingeniero</th><th>Cliente</th><th class="n">Total</th><th>Estado</th></tr></thead><tbody>
+      ${rows.map(p => { const d = dm[p.deposito_id]; return `<tr><td>${fdm(p.fecha)}</td><td class="n folio">${p.factura || '<span class="mut">s/n</span>'}</td><td>${CARGOS[p.cargo_id]}</td><td class="wrap">${esc(p.cliente)}${p.nota ? `<div class="mut" style="font-size:12px">${esc(p.nota)}</div>` : ''}</td><td class="n">${money(p.total)}</td>
+        <td>${p.deposito_id ? `<span class="badge b-ok">Conciliada</span>${d ? ` <span class="mut">${fdm(d.fecha)} · ${money(d.monto)}</span>` : ''}` : '<span class="badge b-no">Sin depósito</span>'}</td></tr>`; }).join('')}</tbody></table></div>`;
+  } else if (P.vista === 'depositos') {
+    const q = P.q.toLowerCase();
+    let rows = P.dep.filter(d => (!P.cargo || d.cargo_id === P.cargo) && (!P.mes || mesDe(d.fecha) === P.mes) && (!q || ((d.pagador || '') + ' ' + (d.concepto || '')).toLowerCase().includes(q)))
+      .map(d => ({ ...d, lig: (lig[d.id] || 0) / 100, dif: Math.round(c100(d.monto) - (lig[d.id] || 0)) / 100 }));
+    if (P.est !== 'todos') rows = rows.filter(d => Math.abs(d.dif) > 0.004);
+    rows.sort((a, b) => b.fecha.localeCompare(a.fecha));
+    const sel = P.sel && P.dep.find(d => d.id === P.sel);
+    let panel = '';
+    if (sel) {
+      const rest = (c100(sel.monto) - (lig[sel.id] || 0)) / 100;
+      const cand = P.pagos.filter(p => !p.deposito_id && p.cargo_id === sel.cargo_id).sort((a, b) => (a.fecha ? dias(a.fecha, sel.fecha) : 9e3) - (b.fecha ? dias(b.fecha, sel.fecha) : 9e3) || a.id - b.id).slice(0, 80);
+      const ligadas = P.pagos.filter(p => p.deposito_id === sel.id);
+      panel = `<div class="card" style="border-color:var(--gold)"><div class="row" style="justify-content:space-between"><div><b>${CARGOS[sel.cargo_id]}</b> · ${fdm(sel.fecha)} · ${esc((sel.pagador || '').replace(/^\d+-[A-Z ]+ DE /, ''))}<br><span class="mut">Depósito ${money(sel.monto)} · saldo por ligar ${money(rest)}</span></div><button class="btn sec" id="pcl">Cerrar</button></div>
+        ${ligadas.length ? `<p class="mut" style="margin:10px 0 4px">Facturas ligadas</p><div class="tw"><table><tbody>${ligadas.map(p => `<tr><td>${fdm(p.fecha)}</td><td class="n folio">${p.factura || 's/n'}</td><td class="wrap">${esc(p.cliente)}</td><td class="n">${money(p.total)}</td>${puedeConciliar() ? `<td><a href="#" data-des="${p.id}">Desligar</a></td>` : ''}</tr>`).join('')}</tbody></table></div>` : ''}
+        <p class="mut" style="margin:10px 0 4px">Facturas sin depósito de ${CARGOS[sel.cargo_id]} (más cercanas en fecha primero). Seleccionar las que integran el depósito.</p>
+        <div class="tw" style="max-height:340px;overflow:auto"><table><tbody>${cand.map(p => `<tr><td><input type="checkbox" data-lig="${p.id}" data-m="${c100(p.total)}" style="width:auto"></td><td>${fdm(p.fecha)}</td><td class="n folio">${p.factura || 's/n'}</td><td class="wrap">${esc(p.cliente)}</td><td class="n">${money(p.total)}</td></tr>`).join('') || '<tr><td class="mut">No hay facturas pendientes de este ingeniero.</td></tr>'}</tbody></table></div>
+        <div class="row" style="margin-top:10px;justify-content:space-between"><div id="psum" class="mut">Seleccionado: $0.00</div><button class="btn gold" id="pgo" disabled>Ligar seleccionadas</button></div></div>`;
+    }
+    const prop = P.prop;
+    const propHTML = prop ? `<div class="card"><b>Coincidencias encontradas: ${prop.length}</b><p class="mut" style="margin:6px 0">La suma de las facturas coincide exactamente con el saldo del depósito. Revisar y aplicar las seleccionadas; las de «Mismo mes» no vienen marcadas.</p>
+      ${prop.length ? `<div class="tw"><table><thead><tr><th></th><th>Depósito</th><th>Ingeniero</th><th class="n">Monto</th><th>Facturas</th><th>Criterio</th></tr></thead><tbody>${prop.map((x, i) => `<tr><td><input type="checkbox" data-pp="${i}" ${x.incl ? 'checked' : ''} style="width:auto"></td><td>${fdm(x.dep.fecha)}</td><td>${CARGOS[x.dep.cargo_id]}</td><td class="n">${money(x.dep.rest / 100)}</td><td class="wrap">${x.ids.map(id => { const p = P.pagos.find(z => z.id === id); return p.factura || 's/n'; }).join(', ')}</td><td class="mut">${x.crit}</td></tr>`).join('')}</tbody></table></div>
+      <div style="margin-top:10px"><button class="btn gold" id="pap">Aplicar ${prop.filter(x => x.incl).length} conciliaciones</button></div>` : '<p class="mut">No se encontraron coincidencias adicionales.</p>'}</div>` : '';
+    cuerpo = `${P.ok ? `<div class="msg ok">${esc(P.ok)}</div>` : ''}${filtroC}<div class="sticky-f">${mesesOpt}<select id="pe"><option value="">Con diferencia</option><option value="todos" ${P.est === 'todos' ? 'selected' : ''}>Todos</option></select><input id="pq" placeholder="Buscar pagador o concepto…" value="${esc(P.q)}"></div>
+      ${puedeConciliar() ? `<div class="row" style="margin-bottom:8px"><button class="btn" id="pbus">Buscar coincidencias automáticas</button><button class="btn sec" id="pxl">Descargar Excel</button></div>` : ''}${propHTML}${panel}
+      <div class="tw"><table><thead><tr><th>Fecha</th><th>Ingeniero</th><th>Pagador</th><th class="n">Monto</th><th class="n">Ligado</th><th class="n">Diferencia</th>${puedeConciliar() ? '<th></th>' : ''}</tr></thead><tbody>
+      ${rows.map(d => `<tr><td>${fdm(d.fecha)}</td><td>${CARGOS[d.cargo_id]}</td><td class="wrap">${esc((d.pagador || '').replace(/^\d+-[A-Z ]+ DE /, ''))}<div class="mut" style="font-size:12px">${esc(d.concepto || '')}</div></td><td class="n">${money(d.monto)}</td><td class="n">${d.lig ? money(d.lig) : '—'}</td><td class="n ${Math.abs(d.dif) > 0.004 ? 'neg' : 'pos'}">${Math.abs(d.dif) > 0.004 ? money(d.dif) : 'Cuadra'}</td>${puedeConciliar() ? `<td><a href="#" data-sel="${d.id}">Ligar</a></td>` : ''}</tr>`).join('') || '<tr><td colspan="7" class="mut">Sin depósitos con diferencia.</td></tr>'}</tbody></table></div>`;
+    P._rows = rows;
+  } else {
+    const im = P.imp;
+    const nN = im ? im.nuevos.filter(x => x.incl).length : 0, nC = im ? im.cambios.filter(x => x.incl).length : 0;
+    const pest = (k, l, n, cls) => `<button class="chip ${im.vista === k ? 'on' : ''}" data-v="${k}">${l} <b class="${cls || ''}">${n}</b></button>`;
+    const tabla = () => {
+      if (im.vista === 'nuevos') return im.nuevos.length ? `<div class="tw"><table><thead><tr><th><input type="checkbox" id="todosN" ${im.nuevos.every(x => x.incl) ? 'checked' : ''} style="width:auto"></th><th>Ingeniero</th><th class="n">Factura</th><th>Fecha</th><th>Cliente</th><th class="n">Total</th><th>Hoja</th></tr></thead><tbody>
+        ${im.nuevos.map((x, i) => `<tr style="${x.incl ? '' : 'opacity:.5'}"><td><input type="checkbox" data-n="${i}" ${x.incl ? 'checked' : ''} style="width:auto"></td><td>${CARGOS[x.cargo_id]}</td><td class="n folio">${x.factura || '<span class="mut">s/n</span>'}</td><td>${fdm(x.fecha)}</td><td class="wrap">${esc(x.cliente)}${x.nota ? `<div class="mut" style="font-size:12px">${esc(x.nota)}</div>` : ''}</td><td class="n">${money(x.total)}</td><td class="mut">${esc(x.hoja)} · ${x.fila}</td></tr>`).join('')}</tbody></table></div>` : '<p class="mut">No hay facturas nuevas en el archivo.</p>';
+      if (im.vista === 'cambios') return im.cambios.length ? `<p class="mut" style="margin:0 0 8px">Facturas registradas con datos distintos en el archivo. Solo se aplican las seleccionadas; el valor anterior se conserva en la bitácora.</p><div class="tw"><table><thead><tr><th></th><th>Ingeniero</th><th class="n">Factura</th><th>Campo</th><th>En el sistema</th><th>En el archivo</th></tr></thead><tbody>
+        ${im.cambios.map((x, i) => x.dif.map((d, j) => `<tr>${j === 0 ? `<td rowspan="${x.dif.length}"><input type="checkbox" data-c="${i}" ${x.incl ? 'checked' : ''} style="width:auto"></td><td rowspan="${x.dif.length}">${CARGOS[x.cargo_id]}</td><td rowspan="${x.dif.length}" class="n folio">${x.factura || 's/n'}</td>` : ''}<td>${d[0]}${d[3] ? `<div class="badge b-bad" style="white-space:normal">⚠ ${d[3]}</div>` : ''}</td><td class="wrap">${esc(d[1])}</td><td class="wrap"><b>${esc(d[2])}</b></td></tr>`).join('')).join('')}</tbody></table></div>` : '<p class="mut">Sin diferencias entre el sistema y el archivo.</p>';
+      if (im.vista === 'iguales') return `<p class="mut">${im.iguales.length} facturas del archivo ya registradas sin diferencias.</p>`;
+      if (im.vista === 'soloapp') return im.soloApp.length ? `<p class="mut" style="margin:0 0 8px">Facturas del sistema que <b>no aparecen en el archivo</b>. No se modifican.</p><div class="tw"><table><thead><tr><th>Ingeniero</th><th class="n">Factura</th><th>Fecha</th><th>Cliente</th><th class="n">Total</th></tr></thead><tbody>${im.soloApp.map(p => `<tr><td>${CARGOS[p.cargo_id]}</td><td class="n folio">${p.factura}</td><td>${fdm(p.fecha)}</td><td class="wrap">${esc(p.cliente)}</td><td class="n">${money(p.total)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="mut">Todas las facturas del sistema aparecen en el archivo.</p>';
+      return `${im.errores.length ? `<div class="msg err"><b>Renglones con error (${im.errores.length}):</b><br>${im.errores.map(esc).join('<br>')}</div>` : '<div class="msg ok">Sin errores en el archivo.</div>'}
+        ${im.avisos.length ? `<div class="msg info"><b>Avisos (${im.avisos.length}):</b><br>${im.avisos.map(esc).join('<br>')}</div>` : ''}
+        ${im.ignorados.length ? `<div class="msg info"><b>Secciones omitidas:</b><br>${im.ignorados.map(esc).join('<br>')}</div>` : ''}`;
+    };
+    cuerpo = `<div class="card"><b>Subir archivo PAGOS de la oficina</b><p class="mut" style="margin:6px 0 12px">Archivo con una hoja por mes y un bloque por ingeniero (FECHA, FAC., CLIENTE, IMPORTE, I.V.A, TOTAL). Las facturas existentes no se duplican ni se eliminan.</p>
+      <div class="drop"><input type="file" id="px" accept=".xls,.xlsx,.xlsm"></div><div id="pres"></div></div>
+      ${im ? `<div class="card"><div class="row" style="justify-content:space-between;align-items:center"><div><b>${esc(im.archivo)}</b> · <span class="mut">${im.filas.length} facturas leídas</span></div>
+        <button class="btn gold" id="pgg" ${nN + nC ? '' : 'disabled'}>${nN + nC ? `Guardar ${nN ? nN + ' nueva' + (nN === 1 ? '' : 's') : ''}${nN && nC ? ' y ' : ''}${nC ? nC + ' cambio' + (nC === 1 ? '' : 's') : ''}` : 'Sin cambios por guardar'}</button></div>
+        <div class="chips" style="margin-top:10px">${pest('nuevos', 'Nuevas', im.nuevos.length, 'pos')}${pest('cambios', 'Con diferencias', im.cambios.length, im.cambios.length ? 'neg' : '')}${pest('iguales', 'Sin cambios', im.iguales.length)}${pest('soloapp', 'Solo en el sistema', im.soloApp.length)}${pest('revision', 'Errores y avisos', im.errores.length + im.avisos.length, im.errores.length ? 'neg' : '')}</div></div>${tabla()}` : ''}`;
+  }
+  $('#m').innerHTML = `<div class="chips" style="margin-bottom:12px">${vistas.map(v => `<button class="chip ${P.vista === v[0] ? 'on' : ''}" data-pv="${v[0]}">${v[1]}</button>`).join('')}</div>
+    <div class="msg info" style="margin-top:0">${P.pagos.length} facturas del archivo PAGOS · ${nPend} sin depósito${banco ? ` · ${P.dep.length} depósitos del banco` : ''}</div>${cuerpo}`;
+  /* eventos */
+  document.querySelectorAll('[data-pv]').forEach(b => b.onclick = () => { P.vista = b.dataset.pv; P.est = ''; P.q = ''; P.sel = null; P.prop = null; P.ok = ''; vConcil(); });
+  document.querySelectorAll('[data-pc]').forEach(b => b.onclick = () => { P.cargo = +b.dataset.pc; P.sel = null; vConcil(); });
+  if ($('#pm')) $('#pm').onchange = e => { P.mes = e.target.value; vConcil(); };
+  if ($('#pe')) $('#pe').onchange = e => { P.est = e.target.value; vConcil(); };
+  if ($('#pq')) $('#pq').oninput = e => { P.q = e.target.value; clearTimeout(vConcil.t); vConcil.t = setTimeout(() => { vConcil().then(() => { const n = $('#pq'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } }); }, 250); };
+  if ($('#pxl')) $('#pxl').onclick = () => {
+    if (P.vista === 'facturas') bajarExcel('facturas_pagos.xlsx', P.pagos.filter(p => (!P.cargo || p.cargo_id === P.cargo) && (!P.mes || mesDe(p.fecha) === P.mes)).map(p => ({ FECHA: p.fecha, FACTURA: p.factura, INGENIERO: CARGOS[p.cargo_id], CLIENTE: p.cliente, TOTAL: p.total, ESTADO: p.deposito_id ? 'Conciliada' : 'Sin depósito' })));
+    else bajarExcel('depositos_banco.xlsx', (P._rows || []).map(d => ({ FECHA: d.fecha, INGENIERO: CARGOS[d.cargo_id], PAGADOR: d.pagador, CONCEPTO: d.concepto, MONTO: d.monto, LIGADO: d.lig, DIFERENCIA: d.dif })));
+  };
+  if (P.vista === 'depositos') {
+    document.querySelectorAll('[data-sel]').forEach(a => a.onclick = e => { e.preventDefault(); P.sel = a.dataset.sel; P.ok = ''; vConcil().then(() => { const c = document.querySelector('.card[style*="gold"]'); if (c) c.scrollIntoView({ behavior: 'smooth', block: 'start' }); }); });
+    if ($('#pcl')) $('#pcl').onclick = () => { P.sel = null; vConcil(); };
+    const chk = [...document.querySelectorAll('[data-lig]')];
+    chk.forEach(c => c.onchange = () => { const ids = chk.filter(x => x.checked), s = ids.reduce((a, x) => a + +x.dataset.m, 0); $('#psum').textContent = 'Seleccionado: ' + money(s / 100); $('#pgo').disabled = !ids.length; });
+    if ($('#pgo')) $('#pgo').onclick = async () => {
+      const ids = chk.filter(x => x.checked).map(x => +x.dataset.lig), s = chk.filter(x => x.checked).reduce((a, x) => a + +x.dataset.m, 0);
+      const sel = P.dep.find(d => d.id === P.sel), rest = c100(sel.monto) - (lig[sel.id] || 0);
+      if (s !== rest && !confirm(`La suma seleccionada (${money(s / 100)}) difiere del saldo del depósito (${money(rest / 100)}) por ${money((rest - s) / 100)}. ¿Ligar de todos modos?`)) return;
+      $('#pgo').disabled = true;
+      const { error } = await sb.rpc('pagos_vincular', { p_pago_ids: ids, p_deposito: sel.id, p_origen: 'manual' });
+      if (error) { alert(error.message); return vConcil(); }
+      await cargarPagos(); P.ok = `Se ligaron ${ids.length} factura(s).`; vConcil();
+    };
+    document.querySelectorAll('[data-des]').forEach(a => a.onclick = async e => {
+      e.preventDefault(); if (!confirm('¿Desligar la factura del depósito? La factura se conserva y queda sin depósito.')) return;
+      const { error } = await sb.rpc('pagos_desvincular', { p_pago_ids: [+a.dataset.des] }); if (error) return alert(error.message);
+      await cargarPagos(); vConcil();
+    });
+    if ($('#pbus')) $('#pbus').onclick = () => { P.prop = proponer(); P.ok = ''; vConcil(); };
+    document.querySelectorAll('[data-pp]').forEach(c => c.onchange = () => { P.prop[+c.dataset.pp].incl = c.checked; vConcil(); });
+    if ($('#pap')) $('#pap').onclick = async () => {
+      const sel = P.prop.filter(x => x.incl); if (!sel.length) return;
+      const b = $('#pap'); b.disabled = true; let n = 0;
+      try {
+        for (const x of sel) { b.textContent = `Aplicando… ${n} de ${sel.length}`; const { error } = await sb.rpc('pagos_vincular', { p_pago_ids: x.ids, p_deposito: x.dep.id, p_origen: 'auto' }); if (error) throw error; n++; }
+      } catch (er) { alert(`Se aplicaron ${n} de ${sel.length}. ${er.message || er}`); }
+      await cargarPagos(); P.prop = null; P.ok = `Se aplicaron ${n} conciliaciones.`; vConcil();
+    };
+  }
+  if (P.vista === 'subir') {
+    const im = P.imp;
+    $('#px').onchange = async e => {
+      const f = e.target.files[0]; if (!f) return; e.target.value = '';
+      $('#pres').innerHTML = '<div class="msg info">Procesando archivo…</div>';
+      try {
+        const wb = XLSX.read(await f.arrayBuffer(), { type: 'array', cellDates: false, cellNF: false, cellText: false });
+        const r = leerPagos(wb);
+        if (!r.filas.length && !r.errores.length) { P.imp = null; return $('#pres').innerHTML = `<div class="msg err">No se encontraron facturas. Encabezados requeridos: FECHA, FAC., CLIENTE y TOTAL, con el nombre del ingeniero sobre cada bloque. Si el archivo corresponde a folios de egresos, utilizar «Importar Excel».${r.ignorados.length ? '<br>' + r.ignorados.map(esc).join('<br>') : ''}</div>`; }
+        P.imp = { ...compararPagos(r), archivo: f.name };
+      } catch (er) { P.imp = null; return $('#pres').innerHTML = `<div class="msg err">Error al leer el archivo: ${esc(er.message)}</div>`; }
+      vConcil();
+    };
+    if (!im) return;
+    document.querySelectorAll('[data-v]').forEach(b => b.onclick = e => { e.preventDefault(); im.vista = b.dataset.v; vConcil(); });
+    document.querySelectorAll('input[data-n]').forEach(c => c.onchange = () => { im.nuevos[+c.dataset.n].incl = c.checked; vConcil(); });
+    document.querySelectorAll('input[data-c]').forEach(c => c.onchange = () => { im.cambios[+c.dataset.c].incl = c.checked; vConcil(); });
+    if ($('#todosN')) $('#todosN').onchange = e => { im.nuevos.forEach(x => x.incl = e.target.checked); vConcil(); };
+    $('#pgg').onclick = async () => {
+      const nuevos = im.nuevos.filter(x => x.incl), cambios = im.cambios.filter(x => x.incl);
+      if (cambios.length && !confirm(`Se actualizarán ${cambios.length} factura(s) existentes con los datos del archivo. El valor anterior se conservará en la bitácora. ¿Continuar?`)) return;
+      const b = $('#pgg'); b.disabled = true; const lote = 'pagos-' + new Date().toISOString().replace(/\D/g, '').slice(0, 14), tot = { nuevos: 0, cambios: 0, omitidos: [] };
+      const N = nuevos.map(x => ({ cargo_id: x.cargo_id, fecha: x.fecha, factura: x.factura, cliente: x.cliente, importe: x.importe, iva: x.iva, total: x.total, nota: x.nota, hoja: x.hoja }));
+      const C = cambios.map(x => ({ id: x.id, cargo_id: x.cargo_id, fecha: x.fecha, cliente: x.cliente, importe: x.importe, iva: x.iva, total: x.total }));
+      try {
+        for (let i = 0; i < Math.max(N.length, C.length); i += 150) {
+          b.textContent = `Guardando… ${Math.min(i + 150, Math.max(N.length, C.length))} de ${Math.max(N.length, C.length)}`;
+          const { data, error } = await sb.rpc('pagos_sincronizar', { p_nuevos: N.slice(i, i + 150), p_cambios: C.slice(i, i + 150), p_lote: lote });
+          if (error) throw error;
+          tot.nuevos += data.nuevos; tot.cambios += data.cambios; tot.omitidos.push(...(data.omitidos || []));
+        }
+      } catch (er) {
+        b.disabled = false; b.textContent = 'Reintentar';
+        return $('#pres').innerHTML = `<div class="msg err">${esc(er.message || er)}<br>Guardadas antes del error: ${tot.nuevos} nuevas y ${tot.cambios} cambios. Al cargar de nuevo el mismo archivo, lo ya guardado aparecerá en «Sin cambios» sin duplicarse.</div>`;
+      }
+      P.imp = null; await cargarPagos(); await vConcil();
+      $('#pres').innerHTML = `<div class="msg ok">Archivo procesado: ${tot.nuevos} factura(s) nueva(s) y ${tot.cambios} actualizada(s).${tot.omitidos.length ? `<br><b>No guardadas (${tot.omitidos.length}):</b><br>${tot.omitidos.map(esc).join('<br>')}` : ''}</div>`;
+    };
+  }
 }
 
 /* Actualización en vivo: revisa cada 45 s (y al volver a la pestaña) si hay folios nuevos */
