@@ -345,7 +345,7 @@ function vIngresos() {
 }
 
 /* ---------- Capturar ---------- */
-const proxFolio = c => Math.max(0, ...S.rows.filter(r => r.cargo_id === c && r.tipo === 'EGRESO').map(r => r.folio)) + 1;
+const proxFolio = c => Math.max(0, ...S.rows.filter(r => r.cargo_id === c && r.tipo === 'EGRESO' && r.folio < 1000).map(r => r.folio)) + 1;
 function fotoB64(file, max) {
   return new Promise((ok, no) => {
     const url = URL.createObjectURL(file), im = new Image();
@@ -360,7 +360,7 @@ function vCapturar() {
   const cats = [...new Set(S.rows.filter(r => r.categoria).map(r => r.categoria))].sort();
   const hoy = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
   $('#m').innerHTML = `<div class="card"><div class="row" style="justify-content:space-between"><div class="seg" id="sg">${['EGRESO', 'INGRESO'].map(t => `<button data-t="${t}" class="${f.tipo === t ? 'on' : ''}">${t === 'EGRESO' ? 'Folio (egreso)' : 'Ingreso'}</button>`).join('')}</div></div>
-  ${f.tipo === 'EGRESO' ? `<div style="margin-top:10px"><button class="btn" id="foto" style="width:100%">Tomar o subir foto del folio</button><input type="file" id="fotoin" accept="image/*" style="display:none"><div id="lee"></div></div>` : ''}
+  ${f.tipo === 'EGRESO' ? `<div style="margin-top:10px"><button class="btn" id="foto" style="width:100%">Tomar o subir foto de la libreta</button><input type="file" id="fotoin" accept="image/*" style="display:none"><div id="lee"></div></div>` : ''}
   <label>Unidad</label><div class="chips" id="un">${uns.map(u => `<button class="chip ${f.unidad === u ? 'on' : ''}" data-u="${u}">${nomU(u)}</button>`).join('')}<button class="chip" id="unnew">+ Nueva</button></div>
   <label>Cargo a</label><div class="chips" id="cg">${Object.keys(CARGOS).map(Number).map(c => `<button class="chip ${f.cargo === c ? 'on' : ''}" data-c="${c}">${CARGOS[c]}</button>`).join('')}</div>
   ${f.tipo === 'EGRESO' ? `<div class="msg info">Folio que se asignará: <b class="folio" style="font-size:20px">${proxFolio(f.cargo)}</b></div>` : ''}
@@ -376,25 +376,9 @@ function vCapturar() {
   ['#cf', '#cc', '#cm'].forEach(q => { const e = $(q); if (e) e.oninput = guarda; });
   if ($('#foto')) {
     $('#foto').onclick = () => $('#fotoin').click();
-    $('#fotoin').onchange = async e => {
-      const file = e.target.files[0]; if (!file) return;
-      const box = $('#lee'); box.innerHTML = '<div class="msg info">Leyendo la foto del folio…</div>';
-      try {
-        const b64 = await fotoB64(file, 1600);
-        const { data, error } = await sb.functions.invoke('leer-folio', { body: { imagen: b64, tipo: 'image/jpeg', cargos: Object.values(CARGOS) } });
-        if (error) { let m = error.message; try { const j = await error.context.json(); m = j.error || m; } catch (x) { } throw new Error(m); }
-        const L = data && data.lectura; if (!L) throw new Error((data && data.error) || 'sin respuesta');
-        const cid = Object.keys(CARGOS).find(k => CARGOS[k] === String(L.cargo || '').toUpperCase());
-        if (cid) f.cargo = +cid;
-        if (L.fecha && /^\d{4}-\d{2}-\d{2}$/.test(L.fecha)) f.fecha = L.fecha;
-        if (L.concepto) f.concepto = String(L.concepto).toUpperCase();
-        if (L.monto != null && Number(L.monto) > 0) f.monto = Number(L.monto).toFixed(2);
-        const nota = [L.folio ? 'Folio de la hoja: <b>' + esc(String(L.folio)) + '</b>' : '', L.legible === false ? 'La foto no es del todo legible' : ''].filter(Boolean).join(' · ');
-        vCapturar();
-        $('#lee').innerHTML = `<div class="msg ok">Datos tomados de la foto. Verificar antes de guardar.${nota ? '<br>' + nota : ''}${L.folio && f.tipo === 'EGRESO' && +L.folio !== proxFolio(f.cargo) ? '<br>El folio que se asignará (' + proxFolio(f.cargo) + ') es distinto al de la hoja.' : ''}</div>`;
-      } catch (x) { box.innerHTML = `<div class="msg err">No fue posible leer la foto (${esc(String(x.message || x).slice(0, 120))}). Capturar los datos manualmente.</div>`; }
-    };
+    $('#fotoin').onchange = e => { const file = e.target.files[0]; e.target.value = ''; if (file) leerLibreta(file); };
   }
+  if (S.lib) pintaLibreta();
   $('#go').onclick = async () => {
     const concepto = $('#cc').value.trim(), monto = parseFloat($('#cm').value), fecha = $('#cf').value;
     if (!concepto || !(monto > 0) || !fecha) return $('#res').innerHTML = '<div class="msg err">Se requiere fecha, concepto y monto.</div>';
@@ -404,6 +388,57 @@ function vCapturar() {
     if (error) return $('#res').innerHTML = `<div class="msg err">${esc(error.message)}</div>`;
     f.fecha = f.concepto = f.monto = ''; await cargar(); vCapturar();
     $('#res').innerHTML = `<div class="msg ok">Registro guardado ${f.tipo === 'EGRESO' ? 'con el folio ' + data.folio : ''} · ${money(data.monto)} · ${esc(data.concepto)}</div>`;
+  };
+}
+
+/* ---------- Lectura de libreta por foto ---------- */
+const estadoLib = x => {
+  const e = S.rows.find(r => r.tipo === 'EGRESO' && r.cargo_id === x.cargo_id && r.folio === x.folio);
+  if (!e) return { k: 'nuevo' };
+  return Math.abs(Number(e.monto) - Number(x.monto)) <= 1 ? { k: 'igual' } : { k: 'distinto', monto: Number(e.monto), concepto: e.concepto };
+};
+async function leerLibreta(file) {
+  const box = $('#lee'); if (!box) return;
+  S.lib = null; box.innerHTML = '<div class="msg info">Leyendo la foto. Puede tardar hasta un minuto…</div>';
+  try {
+    const ultimos = {}; Object.keys(CARGOS).forEach(c => { const m = Math.max(0, ...S.rows.filter(r => r.cargo_id === +c && r.tipo === 'EGRESO' && r.folio < 1000).map(r => r.folio)); if (m) ultimos[CARGOS[c]] = m; });
+    const b64 = await fotoB64(file, 2000);
+    const { data, error } = await sb.functions.invoke('leer-folio', { body: { imagen: b64, tipo: 'image/jpeg', cargos: Object.values(CARGOS), ultimos } });
+    if (error) { let m = error.message; try { const j = await error.context.json(); m = j.error || m; } catch (x) { } throw new Error(m); }
+    const L = data && data.lectura; if (!L || !Array.isArray(L.filas)) throw new Error((data && data.error) || 'sin respuesta');
+    const idDe = n => { const k = Object.keys(CARGOS).find(c => CARGOS[c] === String(n || '').toUpperCase()); return k ? +k : 0; };
+    S.lib = { legible: L.legible !== false, filas: L.filas.map(r => ({ cargo_id: idDe(r.cargo), folio: r.folio == null ? 0 : +r.folio, fecha: /^\d{4}-\d{2}-\d{2}$/.test(r.fecha || '') ? r.fecha : '', concepto: String(r.concepto || '').toUpperCase(), monto: r.monto == null ? '' : Number(r.monto), dudoso: !!r.dudoso, incl: true })) };
+    S.lib.filas.forEach(x => { x.incl = estadoLib(x).k === 'nuevo' && !!(x.cargo_id && x.folio && x.fecha && x.concepto && x.monto > 0); });
+    pintaLibreta();
+  } catch (x) { S.lib = null; box.innerHTML = `<div class="msg err">No fue posible leer la foto (${esc(String(x.message || x).slice(0, 140))}). Intentar con otra foto más nítida o capturar manualmente.</div>`; }
+}
+function pintaLibreta() {
+  const box = $('#lee'); if (!box || !S.lib) return;
+  const L = S.lib, cuenta = L.filas.filter(x => x.incl).length;
+  const est = x => { const e = estadoLib(x); return e.k === 'nuevo' ? '<span class="mut">Nuevo</span>' : e.k === 'igual' ? '<span class="mut">Ya registrado</span>' : `<span style="color:#b45309">Ya existe con ${money(e.monto)}</span>`; };
+  box.innerHTML = `<div class="msg info" style="margin-top:10px">Se leyeron ${L.filas.length} renglones. Verificar cada dato contra la libreta y marcar los que se van a cargar. Los folios ya registrados no se sobrescriben.${L.legible ? '' : ' La foto no es del todo legible.'}</div>
+  <div class="tw"><table><thead><tr><th></th><th>Cargo</th><th class="n">Folio</th><th>Fecha</th><th>Concepto</th><th class="n">Monto</th><th>Estado</th></tr></thead><tbody>
+  ${L.filas.map((x, i) => `<tr style="${x.incl ? '' : 'opacity:.55'}${x.dudoso ? ';background:#fffbeb' : ''}"><td><input type="checkbox" data-li="${i}" ${x.incl ? 'checked' : ''} style="width:auto"></td>
+   <td><select data-lf="cargo_id" data-i="${i}" style="padding:5px"><option value="0">—</option>${Object.keys(CARGOS).map(c => `<option value="${c}" ${+c === x.cargo_id ? 'selected' : ''}>${CARGOS[c]}</option>`).join('')}</select></td>
+   <td class="n"><input data-lf="folio" data-i="${i}" type="number" value="${x.folio || ''}" style="width:78px;padding:5px"></td>
+   <td><input data-lf="fecha" data-i="${i}" type="date" value="${x.fecha}" style="padding:5px"></td>
+   <td><input data-lf="concepto" data-i="${i}" value="${esc(x.concepto)}" style="min-width:220px;padding:5px"></td>
+   <td class="n"><input data-lf="monto" data-i="${i}" type="number" step="0.01" value="${x.monto}" style="width:110px;padding:5px"></td><td>${est(x)}${x.dudoso ? '<br><span style="color:#b45309">Revisar</span>' : ''}</td></tr>`).join('')}</tbody></table></div>
+  <div style="margin-top:12px"><button class="btn gold" id="libgo" ${cuenta ? '' : 'disabled'}>Cargar ${cuenta} folio${cuenta === 1 ? '' : 's'}</button> <button class="btn ghost" id="libno">Descartar</button></div><div id="libres"></div>`;
+  box.querySelectorAll('input[data-li]').forEach(c => c.onchange = () => { L.filas[+c.dataset.li].incl = c.checked; pintaLibreta(); });
+  box.querySelectorAll('[data-lf]').forEach(c => c.onchange = () => {
+    const x = L.filas[+c.dataset.i], k = c.dataset.lf, v = c.value;
+    x[k] = k === 'cargo_id' || k === 'folio' ? +v : k === 'monto' ? (v === '' ? '' : Number(v)) : k === 'concepto' ? v.toUpperCase() : v;
+    x.dudoso = false; x.incl = estadoLib(x).k === 'nuevo' && !!(x.cargo_id && x.folio && x.fecha && x.concepto && x.monto > 0); pintaLibreta();
+  });
+  $('#libno').onclick = () => { S.lib = null; box.innerHTML = ''; };
+  $('#libgo').onclick = async () => {
+    const rows = L.filas.filter(x => x.incl).map(x => ({ cargo_id: x.cargo_id, folio: x.folio, fecha: x.fecha, concepto: x.concepto, monto: x.monto }));
+    if (!rows.length) return; $('#libgo').disabled = true;
+    const { data, error } = await sb.rpc('folios_cargar_lote', { p_rows: rows });
+    if (error) { $('#libgo').disabled = false; return $('#libres').innerHTML = `<div class="msg err">${esc(error.message)}</div>`; }
+    S.lib = null; await cargar(); vCapturar();
+    $('#lee').innerHTML = `<div class="msg ok">Carga terminada: ${data.cargados} folios nuevos${data.ya_existian ? ', ' + data.ya_existian + ' ya existían' : ''}${data.omitidos ? ', ' + data.omitidos + ' omitidos por datos incompletos' : ''}.</div>`;
   };
 }
 
