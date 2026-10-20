@@ -115,6 +115,14 @@ async function cargar() {
     if (data.length < 1000) break; from += 1000;
   }
   S.cruce = cr;
+  const md = {}; from = 0;
+  for (;;) {
+    const { data, error } = await sb.from('platon_medio').select('mov_id,medio,referencia').range(from, from + 999);
+    if (error) break;
+    data.forEach(r => md[r.mov_id] = r);
+    if (data.length < 1000) break; from += 1000;
+  }
+  S.medio = md;
 }
 const unidades = () => [...new Set(S.rows.map(r => r.unidad))].sort();
 const cargosDe = () => [...new Set(S.rows.filter(r => !S.unidad || r.unidad === S.unidad).map(r => r.cargo_id))].sort((a, b) => (CARGOS[a] || '').localeCompare(CARGOS[b] || ''));
@@ -206,16 +214,16 @@ function vResumen() {
 function vFolios() {
   const rows = filtradas('EGRESO').sort((a, b) => a.cargo_id - b.cargo_id || a.folio - b.folio);
   const tot = rows.reduce((s, r) => s + Number(r.monto), 0);
-  const conCh = rows.filter(r => S.cruce[r.cargo_id + '-' + r.folio]).length;
+  const conCh = rows.filter(r => S.cruce[r.cargo_id + '-' + r.folio]).length, conEf = rows.filter(r => !S.cruce[r.cargo_id + '-' + r.folio] && (S.medio || {})[r.id]).length;
   $('#m').innerHTML = `${filtrosHTML(true)}
-  <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> folios · <b>${money(tot)}</b> · <span class="mut">${conCh} con cheque registrado, ${rows.length - conCh} sin cheque (efectivo)</span></div>
+  <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> folios · <b>${money(tot)}</b> · <span class="mut">${conCh} con cheque, ${conEf} en efectivo, ${rows.length - conCh - conEf} sin asignar</span></div>
   <button class="btn sec" id="xl">Descargar Excel</button></div>
   <div class="tw"><table><thead><tr>${S.unidad ? '' : '<th>Unidad</th>'}<th>Cargo</th><th class="n">Folio</th><th>Fecha</th><th>Concepto</th><th>Categoría</th><th class="n">Monto</th><th>Pago</th>${esAdmin() ? '<th></th>' : ''}</tr></thead><tbody>
   ${rows.map(r => { const ch = S.cruce[r.cargo_id + '-' + r.folio]; return `<tr>${S.unidad ? '' : `<td>${nomU(r.unidad)}</td>`}<td>${CARGOS[r.cargo_id]}</td><td class="n folio">${r.folio}</td><td>${r.fecha.split('-').reverse().join('/')}</td><td class="wrap">${esc(r.concepto)}</td><td>${esc(r.categoria || '')}</td><td class="n">${money(r.monto)}</td>
-  <td>${ch ? `<span class="badge b-ok">Cheque ${esc(ch)}</span>` : '<span class="badge b-no">Sin cheque</span>'}</td>${esAdmin() ? `<td><a href="#" data-an="${r.id}" class="mut">Anular</a></td>` : ''}</tr>`; }).join('')}
+  <td>${ch ? `<span class="badge b-ok">Cheque ${esc(ch)}</span>` : (S.medio || {})[r.id] ? `<span class="badge b-ok" title="${esc(S.medio[r.id].referencia || '')}">${S.medio[r.id].medio === 'EFECTIVO' ? 'Efectivo' : esc(S.medio[r.id].medio)}</span>` : '<span class="badge b-no">Sin asignar</span>'}</td>${esAdmin() ? `<td><a href="#" data-an="${r.id}" class="mut">Anular</a></td>` : ''}</tr>`; }).join('')}
   </tbody></table></div>`;
   ligaFiltros(vFolios);
-  $('#xl').onclick = () => bajarExcel('folios_platon.xlsx', rows.map(r => ({ UNIDAD: r.unidad, FECHA: r.fecha, CARGO: CARGOS[r.cargo_id], FOLIO: r.folio, CONCEPTO: r.concepto, MONTO: Number(r.monto), CATEGORIA: r.categoria, CHEQUE: S.cruce[r.cargo_id + '-' + r.folio] || '' })));
+  $('#xl').onclick = () => bajarExcel('folios_platon.xlsx', rows.map(r => ({ UNIDAD: r.unidad, FECHA: r.fecha, CARGO: CARGOS[r.cargo_id], FOLIO: r.folio, CONCEPTO: r.concepto, MONTO: Number(r.monto), CATEGORIA: r.categoria, CHEQUE: S.cruce[r.cargo_id + '-' + r.folio] || '', MEDIO: S.cruce[r.cargo_id + '-' + r.folio] ? 'CHEQUE' : ((S.medio || {})[r.id] || {}).medio || '', REFERENCIA: ((S.medio || {})[r.id] || {}).referencia || '' })));
   document.querySelectorAll('[data-an]').forEach(a => a.onclick = async e => {
     e.preventDefault(); const nota = prompt('Motivo de anulación del folio (el registro se conserva):'); if (!nota) return;
     const { error } = await sb.rpc('platon_anular', { p_id: +a.dataset.an, p_nota: nota }); if (error) return alert(error.message);
