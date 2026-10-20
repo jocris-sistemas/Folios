@@ -92,7 +92,7 @@ const money = n => (n < 0 ? '-' : '') + '$' + Math.abs(Number(n) || 0).toLocaleS
 const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 const CARGOS = {}, CARGO_ID = {};
 const limpia = n => String(n || '').replace(/^ING\.\s*/i, '').trim().toUpperCase();
-const S = { unidad: '', perfil: null, rows: [], cruce: {}, tab: 'resumen', cargo: 0, mes: '', q: '', anio: 2026, imp: null };
+const S = { unidad: '', perfil: null, rows: [], cruce: {}, tab: 'folios', cargo: 0, mes: '', q: '', anio: 2026, imp: null };
 const puedeCapturar = () => S.perfil && ['administrador', 'capturista'].includes(S.perfil.rol);
 const esAdmin = () => S.perfil && S.perfil.rol === 'administrador';
 
@@ -160,13 +160,14 @@ async function boot() {
 
 /* ---------- estructura ---------- */
 function shell() {
-  const tabs = [['resumen', 'Resumen'], ['folios', 'Folios'], ['ingresos', 'Ingresos']];
+  const tabs = [['folios', 'Folios'], ['ingresos', 'Ingresos']];
   if (puedeCapturar()) tabs.push(['capturar', 'Capturar'], ['importar', 'Importar Excel']);
   $('#app').innerHTML = `<header><div class="top"><h1>Folios<small>egresos e ingresos</small></h1>
     <div class="who">${esc(S.perfil.nombre || S.perfil.correo || '')}<br><a href="#" id="out" style="color:#fff">Cerrar sesión</a></div></div>
     <nav>${tabs.map(t => `<button data-t="${t[0]}" class="${S.tab === t[0] ? 'on' : ''}">${t[1]}</button>`).join('')}</nav></header><main id="m"></main>`;
   document.querySelectorAll('nav button').forEach(b => b.onclick = () => { S.tab = b.dataset.t; shell(); });
   $('#out').onclick = async e => { e.preventDefault(); await sb.auth.signOut(); location.reload(); };
+  if (S.tab === 'resumen') S.tab = 'folios';
   ({ resumen: vResumen, folios: vFolios, ingresos: vIngresos, concil: vConcil, capturar: vCapturar, importar: vImportar })[S.tab]();
 }
 function fijaCargo() { const cs = cargosDe(); if (!cs.includes(S.cargo)) S.cargo = cs.includes(CARGO_ID['EGBERT']) ? CARGO_ID['EGBERT'] : (cs[0] || 0); }
@@ -174,7 +175,7 @@ function filtrosHTML(conBuscar, sinTodos) {
   const meses = MESES.map((m, i) => `<option value="${String(i + 1).padStart(2, '0')}" ${S.mes === String(i + 1).padStart(2, '0') ? 'selected' : ''}>${m}</option>`).join('');
   const us = unidades(); if (S.cargo && !cargosDe().includes(S.cargo)) S.cargo = 0;
   return `${us.length > 1 ? `<div class="chips" style="margin-bottom:8px">${[['', 'Todas las unidades'], ...us.map(u => [u, nomU(u)])].map(u => `<button class="chip ${S.unidad === u[0] ? 'on' : ''}" data-u="${u[0]}">${u[1]}</button>`).join('')}</div>` : ''}<div class="chips" style="margin-bottom:10px">${[...(sinTodos ? [] : [[0, 'Todos']]), ...cargosDe().map(c => [c, CARGOS[c]])].map(c => `<button class="chip ${S.cargo === c[0] ? 'on' : ''}" data-c="${c[0]}">${c[1]}</button>`).join('')}</div>
-  <div class="sticky-f"><select id="fm"><option value="">Todo el año</option>${meses}</select>${conBuscar ? `<input id="fq" placeholder="Buscar concepto, folio, categoría…" value="${esc(S.q)}">` : ''}</div>`;
+  <div class="sticky-f"><select id="fm"><option value="">Todo el año</option>${meses}</select>${conBuscar ? `<input id="fq" placeholder="Buscar concepto o folio…" value="${esc(S.q)}">` : ''}</div>`;
 }
 function ligaFiltros(rerender) {
   document.querySelectorAll('.chip[data-u]').forEach(b => b.onclick = () => { S.unidad = b.dataset.u; S.cargo = 0; rerender(); });
@@ -292,24 +293,23 @@ function vFolios() {
   const conCh = rows.filter(r => S.cruce[r.cargo_id + '-' + r.folio]).length, conEf = rows.filter(r => !S.cruce[r.cargo_id + '-' + r.folio] && (S.medio || {})[r.id]).length;
   $('#m').innerHTML = `${filtrosHTML(true, true)}
   <div class="sticky-f"><select id="ffp"><option value="">Pago: todos</option>${[['CHEQUE', 'Con cheque'], ['EFECTIVO', 'En efectivo'], ['SIN', 'Sin asignar']].map(o => `<option value="${o[0]}" ${FF.p === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('')}</select>
-  <select id="ffc"><option value="">Categoría: todas</option>${cats.map(c => `<option ${FF.c === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
   <input type="date" id="ffd" value="${FF.d}" title="Desde"><input type="date" id="ffh" value="${FF.h}" title="Hasta"><button class="btn sec" id="ffl">Limpiar filtros</button></div>
   <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> folios · <b>${money(tot)}</b> · <span class="mut">${conCh} con cheque, ${conEf} en efectivo, ${rows.length - conCh - conEf} sin asignar</span></div>
   <div class="row" style="gap:8px"><button class="btn sec" id="xl">Descargar Excel</button><button class="btn sec" id="pdf">Descargar PDF</button></div></div>
-  <div class="tw"><table><thead><tr>${S.unidad ? '' : '<th>Unidad</th>'}<th>Cargo</th><th class="n">Folio</th><th>Fecha</th><th>Concepto</th><th>Categoría</th><th class="n">Monto</th><th>Pago</th>${esAdmin() ? '<th></th>' : ''}</tr></thead><tbody>
-  ${rows.map(r => { const ch = S.cruce[r.cargo_id + '-' + r.folio]; return `<tr>${S.unidad ? '' : `<td>${nomU(r.unidad)}</td>`}<td>${CARGOS[r.cargo_id]}</td><td class="n folio">${r.folio}</td><td>${r.fecha.split('-').reverse().join('/')}</td><td class="wrap">${esc(r.concepto)}</td><td>${esc(r.categoria || '')}</td><td class="n">${money(r.monto)}</td>
+  <div class="tw"><table><thead><tr>${S.unidad ? '' : '<th>Unidad</th>'}<th>Cargo</th><th class="n">Folio</th><th>Fecha</th><th>Concepto</th><th class="n">Monto</th><th>Pago</th>${esAdmin() ? '<th></th>' : ''}</tr></thead><tbody>
+  ${rows.map(r => { const ch = S.cruce[r.cargo_id + '-' + r.folio]; return `<tr>${S.unidad ? '' : `<td>${nomU(r.unidad)}</td>`}<td>${CARGOS[r.cargo_id]}</td><td class="n folio">${r.folio}</td><td>${r.fecha.split('-').reverse().join('/')}</td><td class="wrap">${esc(r.concepto)}</td><td class="n">${money(r.monto)}</td>
   <td>${ch ? `<span class="badge b-ok">Cheque ${esc(ch)}</span>` : (S.medio || {})[r.id] ? `<span class="badge b-ok" title="${esc(S.medio[r.id].referencia || '')}">${S.medio[r.id].medio === 'EFECTIVO' ? 'Efectivo' : esc(S.medio[r.id].medio)}</span>` : '<span class="badge b-no">Sin asignar</span>'}</td>${esAdmin() ? `<td><a href="#" data-an="${r.id}" class="mut">Anular</a></td>` : ''}</tr>`; }).join('')}
   </tbody></table></div>`;
   ligaFiltros(vFolios);
   const bind = (id, k) => { const e = $(id); if (e) e.onchange = ev => { FF[k] = ev.target.value; vFolios(); }; };
-  bind('#ffp', 'p'); bind('#ffc', 'c'); bind('#ffd', 'd'); bind('#ffh', 'h');
+  bind('#ffp', 'p'); bind('#ffd', 'd'); bind('#ffh', 'h');
   $('#ffl').onclick = () => { S.ff = { p: '', c: '', d: '', h: '' }; S.q = ''; S.mes = ''; vFolios(); };
   const extraF = () => [FF.p && 'Pago: ' + ({ CHEQUE: 'con cheque', EFECTIVO: 'en efectivo', SIN: 'sin asignar' }[FF.p]), FF.c && 'Categoría: ' + FF.c, FF.d && 'Desde: ' + fFecha(FF.d), FF.h && 'Hasta: ' + fFecha(FF.h)].filter(Boolean);
   const nomF = 'folios_' + (S.unidad ? S.unidad + '_' : '') + (S.cargo ? CARGOS[S.cargo] + '_' : '') + hoyISO();
-  $('#xl').onclick = () => { const f = rows.map(r => ({ UNIDAD: r.unidad, FECHA: r.fecha, CARGO: CARGOS[r.cargo_id], FOLIO: r.folio, CONCEPTO: r.concepto, CATEGORIA: r.categoria || '', MONTO: Number(r.monto), PAGO: pagoTxt(r), REFERENCIA: ((S.medio || {})[r.id] || {}).referencia || '' })); f.push({ CONCEPTO: 'TOTAL', MONTO: tot }); bajarExcel(nomF + '.xlsx', f); };
+  $('#xl').onclick = () => { const f = rows.map(r => ({ UNIDAD: r.unidad, FECHA: r.fecha, CARGO: CARGOS[r.cargo_id], FOLIO: r.folio, CONCEPTO: r.concepto, MONTO: Number(r.monto), PAGO: pagoTxt(r), REFERENCIA: ((S.medio || {})[r.id] || {}).referencia || '' })); f.push({ CONCEPTO: 'TOTAL', MONTO: tot }); bajarExcel(nomF + '.xlsx', f); };
   $('#pdf').onclick = () => {
-    const cols = [...(S.unidad ? [] : [{ t: 'Unidad', w: 1 }]), { t: 'Cargo', w: 1.2 }, { t: 'Folio', w: .7, n: 1 }, { t: 'Fecha', w: 1 }, { t: 'Concepto', w: 4.2 }, { t: 'Categoría', w: 1.9 }, { t: 'Monto', w: 1.4, n: 1 }, { t: 'Pago', w: 1.6 }];
-    const filas = rows.map(r => [...(S.unidad ? [] : [nomU(r.unidad)]), CARGOS[r.cargo_id], r.folio, fFecha(r.fecha), r.concepto, r.categoria || '', money(r.monto), pagoTxt(r)]);
+    const cols = [...(S.unidad ? [] : [{ t: 'Unidad', w: 1 }]), { t: 'Cargo', w: 1.2 }, { t: 'Folio', w: .7, n: 1 }, { t: 'Fecha', w: 1 }, { t: 'Concepto', w: 5 }, { t: 'Monto', w: 1.4, n: 1 }, { t: 'Pago', w: 1.6 }];
+    const filas = rows.map(r => [...(S.unidad ? [] : [nomU(r.unidad)]), CARGOS[r.cargo_id], r.folio, fFecha(r.fecha), r.concepto, money(r.monto), pagoTxt(r)]);
     const pie = cols.map((c, i) => i === cols.length - 3 ? 'TOTAL' : i === cols.length - 2 ? money(tot) : '');
     bajarPDF(nomF + '.pdf', 'Folios (' + rows.length + ')', txtFiltros(extraF()), cols, filas, pie);
   };
@@ -346,32 +346,63 @@ function vIngresos() {
 
 /* ---------- Capturar ---------- */
 const proxFolio = c => Math.max(0, ...S.rows.filter(r => r.cargo_id === c && r.tipo === 'EGRESO').map(r => r.folio)) + 1;
+function fotoB64(file, max) {
+  return new Promise((ok, no) => {
+    const url = URL.createObjectURL(file), im = new Image();
+    im.onload = () => { const k = Math.min(1, max / Math.max(im.width, im.height)), c = document.createElement('canvas'); c.width = Math.round(im.width * k); c.height = Math.round(im.height * k); c.getContext('2d').drawImage(im, 0, 0, c.width, c.height); URL.revokeObjectURL(url); ok(c.toDataURL('image/jpeg', .85).split(',')[1]); };
+    im.onerror = () => { URL.revokeObjectURL(url); no(new Error('imagen no válida')); };
+    im.src = url;
+  });
+}
 function vCapturar() {
   const f = S.cap = S.cap || { unidad: S.unidad || 'PLATON', cargo: CARGO_ID['RENE'] || +Object.keys(CARGOS)[0], tipo: 'EGRESO' };
   const uns = [...new Set(['PLATON', ...unidades(), ...((S.cap && S.cap.extra) || [])])];
   const cats = [...new Set(S.rows.filter(r => r.categoria).map(r => r.categoria))].sort();
   const hoy = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
   $('#m').innerHTML = `<div class="card"><div class="row" style="justify-content:space-between"><div class="seg" id="sg">${['EGRESO', 'INGRESO'].map(t => `<button data-t="${t}" class="${f.tipo === t ? 'on' : ''}">${t === 'EGRESO' ? 'Folio (egreso)' : 'Ingreso'}</button>`).join('')}</div></div>
+  ${f.tipo === 'EGRESO' ? `<div style="margin-top:10px"><button class="btn" id="foto" style="width:100%">Tomar o subir foto del folio</button><input type="file" id="fotoin" accept="image/*" style="display:none"><div id="lee"></div></div>` : ''}
   <label>Unidad</label><div class="chips" id="un">${uns.map(u => `<button class="chip ${f.unidad === u ? 'on' : ''}" data-u="${u}">${nomU(u)}</button>`).join('')}<button class="chip" id="unnew">+ Nueva</button></div>
   <label>Cargo a</label><div class="chips" id="cg">${Object.keys(CARGOS).map(Number).map(c => `<button class="chip ${f.cargo === c ? 'on' : ''}" data-c="${c}">${CARGOS[c]}</button>`).join('')}</div>
   ${f.tipo === 'EGRESO' ? `<div class="msg info">Folio que se asignará: <b class="folio" style="font-size:20px">${proxFolio(f.cargo)}</b></div>` : ''}
-  <label>Fecha</label><input type="date" id="cf" value="${hoy}">
-  <label>${f.tipo === 'EGRESO' ? 'Concepto / descripción' : 'Cliente'}</label><input id="cc" autocomplete="off" placeholder="${f.tipo === 'EGRESO' ? 'Ej. TELCEL, RAYAS, PAPELERIA…' : 'Nombre del cliente'}">
-  ${f.tipo === 'EGRESO' ? `<label>Categoría</label><input id="ck" list="cats" autocomplete="off" placeholder="Seleccionar o capturar"><datalist id="cats">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist>` : ''}
-  <label>Monto</label><input id="cm" type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00">
+  <label>Fecha</label><input type="date" id="cf" value="${f.fecha || hoy}">
+  <label>${f.tipo === 'EGRESO' ? 'Concepto / descripción' : 'Cliente'}</label><input id="cc" value="${esc(f.concepto || '')}" autocomplete="off" placeholder="${f.tipo === 'EGRESO' ? 'Ej. TELCEL, RAYAS, PAPELERIA…' : 'Nombre del cliente'}">
+    <label>Monto</label><input id="cm" type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00" value="${f.monto || ''}">
   <div style="margin-top:14px"><button class="btn gold" id="go" style="width:100%">Guardar ${f.tipo === 'EGRESO' ? 'folio' : 'ingreso'}</button></div><div id="res"></div></div>`;
   $('#sg').querySelectorAll('button').forEach(b => b.onclick = () => { f.tipo = b.dataset.t; vCapturar(); });
   $('#un').querySelectorAll('button[data-u]').forEach(b => b.onclick = () => { f.unidad = b.dataset.u; vCapturar(); });
   $('#unnew').onclick = () => { const n = (prompt('Nombre de la nueva unidad (ej. CANCUN):') || '').trim().toUpperCase(); if (n) { f.unidad = n; S.cap.extra = (S.cap.extra || []).concat(n); vCapturar(); } };
   $('#cg').querySelectorAll('button').forEach(b => b.onclick = () => { f.cargo = +b.dataset.c; vCapturar(); });
+  const guarda = () => { f.fecha = $('#cf').value; f.concepto = $('#cc').value; f.monto = $('#cm').value; };
+  ['#cf', '#cc', '#cm'].forEach(q => { const e = $(q); if (e) e.oninput = guarda; });
+  if ($('#foto')) {
+    $('#foto').onclick = () => $('#fotoin').click();
+    $('#fotoin').onchange = async e => {
+      const file = e.target.files[0]; if (!file) return;
+      const box = $('#lee'); box.innerHTML = '<div class="msg info">Leyendo la foto del folio…</div>';
+      try {
+        const b64 = await fotoB64(file, 1600);
+        const { data, error } = await sb.functions.invoke('leer-folio', { body: { imagen: b64, tipo: 'image/jpeg', cargos: Object.values(CARGOS) } });
+        if (error) { let m = error.message; try { const j = await error.context.json(); m = j.error || m; } catch (x) { } throw new Error(m); }
+        const L = data && data.lectura; if (!L) throw new Error((data && data.error) || 'sin respuesta');
+        const cid = Object.keys(CARGOS).find(k => CARGOS[k] === String(L.cargo || '').toUpperCase());
+        if (cid) f.cargo = +cid;
+        if (L.fecha && /^\d{4}-\d{2}-\d{2}$/.test(L.fecha)) f.fecha = L.fecha;
+        if (L.concepto) f.concepto = String(L.concepto).toUpperCase();
+        if (L.monto != null && Number(L.monto) > 0) f.monto = Number(L.monto).toFixed(2);
+        const nota = [L.folio ? 'Folio de la hoja: <b>' + esc(String(L.folio)) + '</b>' : '', L.legible === false ? 'La foto no es del todo legible' : ''].filter(Boolean).join(' · ');
+        vCapturar();
+        $('#lee').innerHTML = `<div class="msg ok">Datos tomados de la foto. Verificar antes de guardar.${nota ? '<br>' + nota : ''}${L.folio && f.tipo === 'EGRESO' && +L.folio !== proxFolio(f.cargo) ? '<br>El folio que se asignará (' + proxFolio(f.cargo) + ') es distinto al de la hoja.' : ''}</div>`;
+      } catch (x) { box.innerHTML = `<div class="msg err">No fue posible leer la foto (${esc(String(x.message || x).slice(0, 120))}). Capturar los datos manualmente.</div>`; }
+    };
+  }
   $('#go').onclick = async () => {
     const concepto = $('#cc').value.trim(), monto = parseFloat($('#cm').value), fecha = $('#cf').value;
     if (!concepto || !(monto > 0) || !fecha) return $('#res').innerHTML = '<div class="msg err">Se requiere fecha, concepto y monto.</div>';
     const b = $('#go'); b.disabled = true;
-    const { data, error } = await sb.rpc('folios_capturar', { p_unidad: f.unidad, p_cargo: f.cargo, p_tipo: f.tipo, p_fecha: fecha, p_concepto: concepto, p_categoria: f.tipo === 'EGRESO' ? ($('#ck').value || null) : null, p_monto: monto });
+    const { data, error } = await sb.rpc('folios_capturar', { p_unidad: f.unidad, p_cargo: f.cargo, p_tipo: f.tipo, p_fecha: fecha, p_concepto: concepto, p_categoria: f.tipo === 'EGRESO' ? (catSugerida(f.cargo, concepto) || null) : null, p_monto: monto });
     b.disabled = false;
     if (error) return $('#res').innerHTML = `<div class="msg err">${esc(error.message)}</div>`;
-    await cargar(); vCapturar();
+    f.fecha = f.concepto = f.monto = ''; await cargar(); vCapturar();
     $('#res').innerHTML = `<div class="msg ok">Registro guardado ${f.tipo === 'EGRESO' ? 'con el folio ' + data.folio : ''} · ${money(data.monto)} · ${esc(data.concepto)}</div>`;
   };
 }
@@ -534,9 +565,9 @@ function vImportar() {
   const cats = [...new Set(S.rows.filter(r => r.categoria).map(r => r.categoria))].sort();
   const nN = im ? im.nuevos.filter(x => x.incl).length : 0, nC = im ? im.cambios.filter(x => x.incl).length : 0;
   const tabla = () => {
-    if (im.vista === 'nuevos') return im.nuevos.length ? `<div class="tw"><table><thead><tr><th><input type="checkbox" id="todosN" ${im.nuevos.every(x => x.incl) ? 'checked' : ''} style="width:auto"></th><th>Cargo</th><th>Tipo</th><th class="n">Folio</th><th>Fecha</th><th>Concepto</th><th>Categoría</th><th class="n">Monto</th><th>Hoja</th></tr></thead><tbody>
+    if (im.vista === 'nuevos') return im.nuevos.length ? `<div class="tw"><table><thead><tr><th><input type="checkbox" id="todosN" ${im.nuevos.every(x => x.incl) ? 'checked' : ''} style="width:auto"></th><th>Cargo</th><th>Tipo</th><th class="n">Folio</th><th>Fecha</th><th>Concepto</th><th class="n">Monto</th><th>Hoja</th></tr></thead><tbody>
       ${im.nuevos.map((x, i) => `<tr style="${x.incl ? '' : 'opacity:.5'}"><td><input type="checkbox" data-n="${i}" ${x.incl ? 'checked' : ''} style="width:auto"></td><td>${CARGOS[x.cargo_id]}</td><td>${x.tipo === 'EGRESO' ? 'Folio' : 'Ingreso'}</td><td class="n folio">${x.folio || (x.tipo === 'EGRESO' ? '<span class="mut">auto</span>' : '')}</td><td>${x.fecha.split('-').reverse().join('/')}</td><td class="wrap">${esc(x.concepto)}</td>
-      <td>${x.tipo === 'EGRESO' ? `<input data-cat="${i}" list="catsI" value="${esc(x.categoria)}" style="min-width:150px;padding:6px">` : ''}</td><td class="n">${money(x.monto)}</td><td class="mut">${esc(x.hoja)} · ${x.fila}</td></tr>`).join('')}
+      <td class="n">${money(x.monto)}</td><td class="mut">${esc(x.hoja)} · ${x.fila}</td></tr>`).join('')}
       </tbody></table><datalist id="catsI">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>` : '<p class="mut">No hay movimientos nuevos en el archivo.</p>';
     if (im.vista === 'cambios') return im.cambios.length ? `<p class="mut" style="margin:0 0 8px">Folios registrados con datos distintos en el Excel. Solo se aplican los cambios seleccionados; el valor anterior se conserva en la bitácora.</p>
       <div class="tw"><table><thead><tr><th><input type="checkbox" id="todosC" ${im.cambios.every(x => x.incl) ? 'checked' : ''} style="width:auto"></th><th>Cargo</th><th class="n">Folio</th><th>Campo</th><th>En el sistema</th><th>En el Excel</th><th>Hoja</th></tr></thead><tbody>
@@ -903,7 +934,7 @@ async function vConcil() {
 /* Actualización en vivo: revisa cada 45 s (y al volver a la pestaña) si hay folios nuevos */
 let _ref = false;
 async function refrescar() {
-  if (_ref || document.hidden || !S.perfil || !['resumen', 'folios', 'ingresos'].includes(S.tab)) return;
+  if (_ref || document.hidden || !S.perfil || !['folios', 'ingresos'].includes(S.tab)) return;
   const ae = document.activeElement; if (ae && /INPUT|SELECT|TEXTAREA/.test(ae.tagName)) return;
   _ref = true;
   try {
