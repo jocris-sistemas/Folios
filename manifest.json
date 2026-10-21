@@ -2,7 +2,7 @@
   "name": "Folios · JOCRIS",
   "short_name": "Folios",
   "description": "Folios de egresos e ingresos.",
-  "id": "./",
+  "id": "/Folios/?app=folios",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
