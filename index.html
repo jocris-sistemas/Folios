@@ -161,7 +161,7 @@ async function cargarExtra() {
 }
 const unidades = () => [...new Set(S.rows.map(r => r.unidad))].sort();
 const cargosDe = () => [...new Set(S.rows.filter(r => !S.unidad || r.unidad === S.unidad).map(r => r.cargo_id))].sort((a, b) => (CARGOS[a] || '').localeCompare(CARGOS[b] || ''));
-const nomU = u => ({ PLATON: 'Platón', CANCUN: 'Cancún', JOCRIS: 'JOCRIS' }[u] || u.charAt(0) + u.slice(1).toLowerCase());
+const nomU = u => ({ PLATON: 'OF PLATON', CANCUN: 'Cancún', JOCRIS: 'JOCRIS' }[u] || u.charAt(0) + u.slice(1).toLowerCase());
 const filtradas = (tipo) => S.rows.filter(r => r.tipo === tipo && (!S.unidad || r.unidad === S.unidad) && (!S.cargo || r.cargo_id === S.cargo) && (!S.mes || r.fecha.slice(5, 7) === S.mes) &&
   (!S.q || (r.concepto + ' ' + (r.categoria || '') + ' ' + (r.folio || '')).toLowerCase().includes(S.q.toLowerCase())));
 
@@ -212,6 +212,7 @@ function shell() {
   document.querySelectorAll('nav button').forEach(b => b.onclick = () => { S.tab = b.dataset.t; shell(); });
   $('#out').onclick = async e => { e.preventDefault(); await sb.auth.signOut(); location.reload(); };
   if (S.tab === 'resumen') S.tab = 'folios';
+  { const us = unidades(); if (!us.includes(S.unidad)) { S.unidad = us.includes('PLATON') ? 'PLATON' : (us[0] || ''); S.cargo = 0; } }
   if (soloFolios() && !['folios', 'capturar'].includes(S.tab)) S.tab = 'folios';
   if (S.tab === 'cancun' && !veCancun()) S.tab = 'folios';
   if (S.tab === 'acumulado' && !veAcumulado()) S.tab = 'folios';
@@ -221,8 +222,9 @@ function shell() {
 function fijaCargo() { const cs = cargosDe(); if (!cs.includes(S.cargo)) S.cargo = cs.includes(CARGO_ID['EGBERT']) ? CARGO_ID['EGBERT'] : (cs[0] || 0); }
 function filtrosHTML(conBuscar, sinTodos) {
   const meses = MESES.map((m, i) => `<option value="${String(i + 1).padStart(2, '0')}" ${S.mes === String(i + 1).padStart(2, '0') ? 'selected' : ''}>${m}</option>`).join('');
-  const us = unidades(); if (S.cargo && !cargosDe().includes(S.cargo)) S.cargo = 0;
-  return `${us.length > 1 ? `<div class="chips" style="margin-bottom:8px">${[['', 'Todas las unidades'], ...us.map(u => [u, nomU(u)])].map(u => `<button class="chip ${S.unidad === u[0] ? 'on' : ''}" data-u="${u[0]}">${u[1]}</button>`).join('')}</div>` : ''}<div class="chips" style="margin-bottom:10px">${[...(sinTodos ? [] : [[0, 'Todos']]), ...cargosDe().map(c => [c, CARGOS[c]])].map(c => `<button class="chip ${S.cargo === c[0] ? 'on' : ''}" data-c="${c[0]}">${c[1]}</button>`).join('')}</div>
+  const us = unidades(); if (!us.includes(S.unidad)) { S.unidad = us.includes('PLATON') ? 'PLATON' : (us[0] || ''); S.cargo = 0; }
+  if (S.cargo && !cargosDe().includes(S.cargo)) S.cargo = 0;
+  return `${us.length > 1 ? `<div class="chips" style="margin-bottom:8px">${us.map(u => [u, nomU(u)]).map(u => `<button class="chip ${S.unidad === u[0] ? 'on' : ''}" data-u="${u[0]}">${u[1]}</button>`).join('')}</div>` : ''}<div class="chips" style="margin-bottom:10px">${[...(sinTodos ? [] : [[0, 'Todos']]), ...cargosDe().map(c => [c, CARGOS[c]])].map(c => `<button class="chip ${S.cargo === c[0] ? 'on' : ''}" data-c="${c[0]}">${c[1]}</button>`).join('')}</div>
   <div class="sticky-f"><select id="fm"><option value="">Todo el año</option>${meses}</select>${conBuscar ? `<input id="fq" placeholder="Buscar concepto o folio…" value="${esc(S.q)}">` : ''}</div>`;
 }
 function ligaFiltros(rerender) {
