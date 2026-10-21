@@ -345,7 +345,7 @@ function vFolios() {
   const FF = S.ff = S.ff || { p: '', c: '', d: '', h: '' };
   const todas = filtradas('EGRESO').sort((a, b) => a.cargo_id - b.cargo_id || a.folio - b.folio);
   const cats = [...new Set(todas.map(r => r.categoria || 'SIN CATEGORÍA'))].sort();
-  const rows = todas.filter(r => (!FF.p || pagoTipo(r) === FF.p) && (!FF.r || (FF.r === 'P' ? (!r.revisado_en && r.unidad === 'PLATON') : !!r.revisado_en)) && (!FF.c || (r.categoria || 'SIN CATEGORÍA') === FF.c) && (!FF.d || r.fecha >= FF.d) && (!FF.h || r.fecha <= FF.h));
+  const rows = todas.filter(r => (!FF.p || pagoTipo(r) === FF.p) && (!FF.r || (FF.r === 'P' ? (!r.revisado_en && r.unidad === 'PLATON' && !esPasado(r)) : !!r.revisado_en)) && (!FF.c || (r.categoria || 'SIN CATEGORÍA') === FF.c) && (!FF.d || r.fecha >= FF.d) && (!FF.h || r.fecha <= FF.h));
   const tot = rows.reduce((s, r) => s + Number(r.monto), 0);
   const conCh = rows.filter(r => S.cruce[r.cargo_id + '-' + r.folio]).length, conEf = rows.filter(r => !S.cruce[r.cargo_id + '-' + r.folio] && (S.medio || {})[r.id]).length;
   $('#m').innerHTML = `${filtrosHTML(true, true)}
@@ -385,8 +385,9 @@ function vFolios() {
 const ahoraMs = () => Date.now();
 const venceMs = r => new Date(r.creado_en).getTime() + 864e5;
 const editable = r => soloFolios() ? (r.creado_por === S.perfil.id && !r.revisado_en && ahoraMs() < venceMs(r)) : !!puedeCapturar();
-const archBadge = r => { const a = S.arch[r.id] || {}; return a.FIRMADO ? '<span class="badge b-ok">Firmado</span>' : a.ORIGINAL ? '<span class="badge b-no">Adjunto</span>' : a.GENERADO ? '<span class="badge b-no">Generado</span>' : '<span class="badge b-bad">Sin archivo</span>'; };
-const estadoBadge = r => r.revisado_en ? '<span class="badge b-ok">Revisado</span>' : (soloFolios() ? (r.creado_por === S.perfil.id && ahoraMs() < venceMs(r) ? '<span class="badge b-no">Editable</span>' : '<span class="badge b-no">Bloqueado</span>') : (r.unidad === 'PLATON' ? '<span class="badge b-bad">Por revisar</span>' : ''));
+const esPasado = r => r.origen === 'sheet' || r.origen === 'excel';
+const archBadge = r => { const a = S.arch[r.id] || {}; return a.FIRMADO ? '<span class="badge b-ok">Firmado</span>' : a.ORIGINAL ? '<span class="badge b-no">Adjunto</span>' : a.GENERADO ? '<span class="badge b-no">Generado</span>' : esPasado(r) ? '' : '<span class="badge b-bad">Sin archivo</span>'; };
+const estadoBadge = r => r.revisado_en ? '<span class="badge b-ok">Revisado</span>' : (soloFolios() ? (r.creado_por === S.perfil.id && ahoraMs() < venceMs(r) ? '<span class="badge b-no">Editable</span>' : '<span class="badge b-no">Bloqueado</span>') : (r.unidad === 'PLATON' && !esPasado(r) ? '<span class="badge b-bad">Por revisar</span>' : ''));
 const fHora = ms => { const d = new Date(ms); return d.toLocaleDateString('es-MX') + ' ' + d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }); };
 async function subeArchivo(movId, tipo, file) {
   if (file.size > 15 * 1024 * 1024) throw new Error('El archivo excede 15 MB.');
