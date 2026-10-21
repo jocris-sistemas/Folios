@@ -95,6 +95,7 @@ const limpia = n => String(n || '').replace(/^ING\.\s*/i, '').trim().toUpperCase
 const S = { arch: {}, acum: [], cancun: [], cn: { sub: 'EFECTIVO', tipo: 'EGRESO', mes: '', q: '', villa: '' }, ac: { semana: '', cargo: 0, q: '', desde: '', sel: {} }, det: null, unidad: '', perfil: null, rows: [], cruce: {}, tab: 'folios', cargo: 0, mes: '', q: '', anio: 2026, imp: null };
 const puedeCapturar = () => S.perfil && ['administrador', 'capturista'].includes(S.perfil.rol);
 const esAdmin = () => S.perfil && S.perfil.rol === 'administrador';
+const puedeImpPl = () => !!(S.perfil && S.perfil.solo_folios && S.perfil.puede_importar_platon);
 const soloFolios = () => !!(S.perfil && S.perfil.solo_folios);
 const veCancun = () => !!(S.perfil && S.perfil.puede_cancun && !S.perfil.solo_folios);
 const veAcumulado = () => !!(S.perfil && !S.perfil.solo_folios);
@@ -208,7 +209,7 @@ async function boot() {
 
 /* ---------- estructura ---------- */
 function shell() {
-  const tabs = soloFolios() ? [['folios', 'Mis folios'], ['capturar', 'Capturar']] : [['folios', 'Folios'], ['ingresos', 'Ingresos']];
+  const tabs = soloFolios() ? [['folios', 'Mis folios'], ['capturar', 'Capturar'], ...(puedeImpPl() ? [['importar', 'Importar Excel']] : [])] : [['folios', 'Folios'], ['ingresos', 'Ingresos']];
   if (veCancun()) tabs.push(['cancun', 'Cancún']);
   if (veAcumulado()) tabs.push(['acumulado', 'Acumulado semanal']);
   if (puedeCapturar() && !soloFolios()) tabs.push(['capturar', 'Capturar'], ['importar', 'Importar Excel']);
@@ -219,7 +220,7 @@ function shell() {
   $('#out').onclick = async e => { e.preventDefault(); await sb.auth.signOut(); location.reload(); };
   if (S.tab === 'resumen') S.tab = 'folios';
   { const us = unidades(); if (!us.includes(S.unidad)) { S.unidad = us.includes('PLATON') ? 'PLATON' : (us[0] || ''); S.cargo = 0; } }
-  if (soloFolios() && !['folios', 'capturar'].includes(S.tab)) S.tab = 'folios';
+  if (soloFolios() && !['folios', 'capturar', ...(puedeImpPl() ? ['importar'] : [])].includes(S.tab)) S.tab = 'folios';
   if (S.tab === 'cancun' && !veCancun()) S.tab = 'folios';
   if (S.tab === 'acumulado' && !veAcumulado()) S.tab = 'folios';
   ({ resumen: vResumen, folios: vFolios, ingresos: vIngresos, concil: vConcil, capturar: vCapturar, importar: vImportar, cancun: vCancun, acumulado: vAcumulado })[S.tab]();
@@ -598,7 +599,7 @@ function vCapturar() {
   const hoy = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
   if (soloFolios()) { f.tipo = 'EGRESO'; f.unidad = 'PLATON'; if (!CARGOS[f.cargo]) f.cargo = +Object.keys(CARGOS)[0]; }
   $('#m').innerHTML = `<div class="card">${soloFolios() ? '' : `<div class="row" style="justify-content:space-between"><div class="seg" id="sg">${['EGRESO', 'INGRESO'].map(t => `<button data-t="${t}" class="${f.tipo === t ? 'on' : ''}">${t === 'EGRESO' ? 'Folio (egreso)' : 'Ingreso'}</button>`).join('')}</div></div>`}
-  ${f.tipo === 'EGRESO' ? `<div style="margin-top:10px"><button class="btn" id="foto" style="width:100%">Tomar o subir foto de la libreta</button><input type="file" id="fotoin" accept="image/*" style="display:none"><div id="lee"></div></div>` : ''}
+  ${f.tipo === 'EGRESO' ? `<div style="margin-top:10px"><button class="btn" id="foto" style="width:100%">Subir archivo</button><input type="file" id="fotoin" accept="image/*" style="display:none"><div id="lee"></div></div>` : ''}
   ${soloFolios() ? '' : `<label>Unidad</label><div class="chips" id="un">${uns.map(u => `<button class="chip ${f.unidad === u ? 'on' : ''}" data-u="${u}">${nomU(u)}</button>`).join('')}<button class="chip" id="unnew">+ Nueva</button></div>`}
   <label>Cargo a</label><div class="chips" id="cg">${Object.keys(CARGOS).map(Number).map(c => `<button class="chip ${f.cargo === c ? 'on' : ''}" data-c="${c}">${CARGOS[c]}</button>`).join('')}</div>
   ${f.tipo === 'EGRESO' ? `<div class="msg info">Folio que se asignará: <b class="folio" style="font-size:20px">${proxFolio(f.cargo)}</b></div>` : ''}
@@ -838,7 +839,7 @@ function comparar(res) {
   return { ...res, avisos, nuevos, iguales, cambios, soloApp, vista: cambios.length ? 'cambios' : 'nuevos' };
 }
 function vImportar() {
-  const im = S.imp, uns = [...new Set(['PLATON', ...unidades(), ...((S.cap && S.cap.extra) || [])])];
+  const im = S.imp, uns = soloFolios() ? ['PLATON'] : [...new Set(['PLATON', ...unidades(), ...((S.cap && S.cap.extra) || [])])];
   const cats = [...new Set(S.rows.filter(r => r.categoria).map(r => r.categoria))].sort();
   const nN = im ? im.nuevos.filter(x => x.incl).length : 0, nC = im ? im.cambios.filter(x => x.incl).length : 0;
   const tabla = () => {
