@@ -168,7 +168,7 @@ async function cargarExtra() {
   if (veCancun()) {
     let cn = []; from = 0;
     for (;;) {
-      const { data, error } = await sb.from('cancun_movimientos').select('id,fecha,cargo,folio,concepto,monto,pago,tipo,categoria,villa,comentarios,depto').order('fecha', { ascending: false }).range(from, from + 999);
+      const { data, error } = await sb.from('cancun_movimientos').select('id,fecha,cargo,folio,concepto,monto,pago,tipo,categoria,villa,comentarios,depto,pagado').order('fecha', { ascending: false }).range(from, from + 999);
       if (error) break;
       cn = cn.concat(data); if (data.length < 1000) break; from += 1000;
     }
@@ -543,7 +543,7 @@ function panelServicios() {
   const bd = x => x.estado === 'PAGADO' ? '<span class="badge b-ok">Pagado</span>' : x.estado === 'VENCIDO' ? '<span class="badge b-bad">Vencido</span>' : x.estado === 'POR VENCER' ? '<span class="badge b-bad">Por vencer</span>' : x.estado === 'POR PAGAR' ? '<span class="badge b-no">Por pagar</span>' : '<span class="badge b-no">Baja</span>';
   const lim = x => x.estado === 'PAGADO' ? 'Próximo corte ' + fFecha(x.proximo_corte) : 'Vence ' + fFecha(x.limite) + (x.dias_para_limite >= 0 ? ' (en ' + x.dias_para_limite + ' día(s))' : ' (hace ' + (-x.dias_para_limite) + ' día(s))');
   const ord = { VENCIDO: 0, 'POR VENCER': 1, 'POR PAGAR': 2, PAGADO: 3 };
-  return `<div class="card" style="max-width:none;margin:0 0 12px"><b>Servicios fijos</b> <span class="mut">· CFE, Telmex y Telcel. Los importes de teléfono e internet requieren confirmación cada mes.</span>
+  return `<div class="card" style="max-width:none;margin:0 0 12px"><b>Servicios fijos</b> <span class="mut">· CFE, agua, gas, teléfono e internet. Los importes variables requieren confirmación cada mes.</span>
   <div class="tw"><table><thead><tr><th>Villa</th><th>Servicio</th><th>No. de servicio</th><th>Estado</th><th>Plazo</th><th class="n">Importe del recibo</th><th>Último pago</th></tr></thead><tbody>
   ${[...sv].filter(x => x.estado !== 'BAJA').sort((a, b) => (ord[a.estado] - ord[b.estado]) || String(a.limite).localeCompare(String(b.limite))).map(x => `<tr><td>${esc(x.villa)}${x.nota ? ' <span class="mut">· ' + esc(x.nota) + '</span>' : ''}</td><td>${esc(x.servicio || '')}</td><td>${esc(x.no_servicio || '')}</td><td>${bd(x)}</td><td>${lim(x)}</td><td class="n">${x.importe_recibo != null ? money(x.importe_recibo) : (x.importe_variable ? 'Por confirmar' : '—')}</td><td>${x.ultimo_pago ? fFecha(x.ultimo_pago) : ''}</td></tr>`).join('')}</tbody></table></div>
   ${(S.villasBaja || []).length ? `<div class="mut" style="margin-top:8px">Sin pagos futuros: ${S.villasBaja.map(v => esc(v.villa) + ' (último pago ' + fFecha(v.ultimo_pago) + ')').join(' · ')}.</div>` : ''}</div>`;
@@ -555,20 +555,21 @@ function vCancun() {
   const meses = MESES.map((m, i) => `<option value="${String(i + 1).padStart(2, '0')}" ${C.mes === String(i + 1).padStart(2, '0') ? 'selected' : ''}>${m}</option>`).join('');
   const rows = base.filter(r => r.pago === C.sub && (!C.tipo || r.tipo === C.tipo) && (!C.mes || (r.fecha || '').slice(5, 7) === C.mes) && (!C.villa || r.villa === C.villa) &&
     (!C.q || [r.concepto, r.categoria, r.villa, r.folio, r.cargo].join(' ').toLowerCase().includes(C.q.toLowerCase())));
-  const tot = rows.reduce((t, r) => t + Number(r.monto || 0), 0);
+  const tot = rows.reduce((t, r) => t + (r.pagado === false ? 0 : Number(r.monto || 0)), 0);
+  const pendT = rows.reduce((t, r) => t + (r.pagado === false ? Number(r.monto || 0) : 0), 0);
   $('#m').innerHTML = `${filtrosHTML(false, true, { soloChips: true })}${panelServicios()}<div class="row" style="margin-bottom:10px"><div class="seg" id="cs">${subs.map(x => `<button data-s="${x[0]}" class="${C.sub === x[0] ? 'on' : ''}">${x[1]} (${base.filter(r => r.pago === x[0] && (!C.tipo || r.tipo === C.tipo)).length})</button>`).join('')}</div></div>
   <div class="sticky-f"><select id="ct"><option value="EGRESO" ${C.tipo === 'EGRESO' ? 'selected' : ''}>Egresos</option><option value="INGRESO" ${C.tipo === 'INGRESO' ? 'selected' : ''}>Ingresos</option><option value="PRESTAMO" ${C.tipo === 'PRESTAMO' ? 'selected' : ''}>Préstamos</option><option value="" ${!C.tipo ? 'selected' : ''}>Todos los tipos</option></select>
   <select id="cm"><option value="">Todo el año</option>${meses}</select><select id="cv"><option value="">Todas las villas</option>${villas.map(v => `<option ${C.villa === v ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>
   <input id="cq" placeholder="Buscar concepto, villa o folio…" value="${esc(C.q)}"></div>
-  <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> registros · <b>${money(tot)}</b></div><button class="btn sec" id="cx">Descargar Excel</button></div>
+  <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> registros · <b>${money(tot)}</b>${pendT ? ` <span class="mut">(sin incluir ${money(pendT)} pendiente de pago)</span>` : ''}</div><button class="btn sec" id="cx">Descargar Excel</button></div>
   <div class="tw"><table><thead><tr><th>Fecha</th><th>Folio</th><th>Cargo</th><th>Concepto</th><th>Categoría</th><th>Villa</th><th class="n">Monto</th><th>Pago y semana</th></tr></thead><tbody>
-  ${rows.map(r => `<tr><td>${fFecha(r.fecha || '')}</td><td class="folio">${esc(r.folio || '')}</td><td>${esc(r.cargo || '')}</td><td class="wrap">${esc(r.concepto || '')}</td><td>${esc(r.categoria || '')}</td><td>${esc(r.villa || '')}</td><td class="n">${money(r.monto)}</td><td>${S.fpc && S.fpc[r.id] ? pagoBadgeFp(S.fpc[r.id]) : ''}</td></tr>`).join('') || '<tr><td colspan="8" class="mut">Sin registros con los filtros seleccionados.</td></tr>'}
+  ${rows.map(r => `<tr><td>${fFecha(r.fecha || '')}</td><td class="folio">${esc(r.folio || '')}</td><td>${esc(r.cargo || '')}</td><td class="wrap">${esc(r.concepto || '')}</td><td>${esc(r.categoria || '')}</td><td>${esc(r.villa || '')}</td><td class="n">${money(r.monto)}</td><td>${r.pagado === false ? '<span class="badge b-bad">Pendiente de pago</span>' : (S.fpc && S.fpc[r.id] ? pagoBadgeFp(S.fpc[r.id]) : '')}</td></tr>`).join('') || '<tr><td colspan="8" class="mut">Sin registros con los filtros seleccionados.</td></tr>'}
   <tr class="tot"><td colspan="6">TOTAL</td><td class="n">${money(tot)}</td><td></td></tr></tbody></table></div>`;
   ligaFiltros(vFolios);
   document.querySelectorAll('#cs button').forEach(b => b.onclick = () => { C.sub = b.dataset.s; vCancun(); });
   $('#ct').onchange = e => { C.tipo = e.target.value; vCancun(); }; $('#cm').onchange = e => { C.mes = e.target.value; vCancun(); }; $('#cv').onchange = e => { C.villa = e.target.value; vCancun(); };
   $('#cq').oninput = e => { C.q = e.target.value; clearTimeout(vCancun.t); vCancun.t = setTimeout(() => { vCancun(); const n = $('#cq'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); }, 250); };
-  $('#cx').onclick = () => { const f = rows.map(r => ({ FECHA: r.fecha, FOLIO: r.folio, CARGO: r.cargo, CONCEPTO: r.concepto, CATEGORIA: r.categoria, VILLA: r.villa, MONTO: Number(r.monto), PAGO: S.fpc && S.fpc[r.id] ? pagoTxtFp(S.fpc[r.id]) : '' })); f.push({ CONCEPTO: 'TOTAL', MONTO: tot }); bajarExcel('cancun_' + C.sub.toLowerCase() + '_' + hoyISO() + '.xlsx', f); };
+  $('#cx').onclick = () => { const f = rows.map(r => ({ FECHA: r.fecha, FOLIO: r.folio, CARGO: r.cargo, CONCEPTO: r.concepto, CATEGORIA: r.categoria, VILLA: r.villa, MONTO: Number(r.monto), PAGO: r.pagado === false ? 'Pendiente de pago' : (S.fpc && S.fpc[r.id] ? pagoTxtFp(S.fpc[r.id]) : '') })); f.push({ CONCEPTO: 'TOTAL', MONTO: tot }); bajarExcel('cancun_' + C.sub.toLowerCase() + '_' + hoyISO() + '.xlsx', f); };
 }
 
 /* ---------- Acumulado semanal ---------- */
