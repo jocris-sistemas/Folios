@@ -28,6 +28,9 @@ main{padding:14px 16px 80px;max-width:1100px;margin:0 auto}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .chips{display:flex;gap:6px;flex-wrap:wrap}
+.tb{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.tb select,.tb input{width:auto;min-width:150px}
+.tb input{flex:1;max-width:340px}
 .chip{background:var(--chip);border:1px solid transparent;color:var(--ink);padding:6px 12px;border-radius:99px;font:inherit;font-size:13.5px;font-weight:600;cursor:pointer}
 .chip.on{background:var(--pri);color:#fff}
 @media(prefers-color-scheme:dark){.chip.on{color:#0d1520}}
@@ -244,12 +247,14 @@ function filtrosHTML(conBuscar, sinTodos, opc) {
   const us = unidades(); if (!us.includes(S.unidad)) { S.unidad = us.includes('PLATON') ? 'PLATON' : (us[0] || ''); S.cargo = 0; }
   const conCan = S.unidad === 'JOCRIS' && veCancun() && !opc.sinCancun;
   if (S.cargo && !(S.cargo === -1 && conCan) && !cargosDe().includes(S.cargo)) S.cargo = 0;
-  return `${us.length > 1 && !opc.sinUnidades ? `<div class="chips" style="margin-bottom:8px">${us.map(u => [u, nomU(u)]).map(u => `<button class="chip ${S.unidad === u[0] ? 'on' : ''}" data-u="${u[0]}">${u[1]}</button>`).join('')}</div>` : ''}<div class="chips" style="margin-bottom:10px">${[...(sinTodos ? [] : [[0, 'Todos']]), ...cargosDe().map(c => [c, CARGOS[c]]), ...(conCan ? [[-1, 'CANCÚN']] : [])].map(c => `<button class="chip ${S.cargo === c[0] ? 'on' : ''}" data-c="${c[0]}">${c[1]}</button>`).join('')}</div>
-  ${opc.soloChips ? '' : `<div class="sticky-f"><select id="fm"><option value="">Todo el año</option>${meses}</select>${conBuscar ? `<input id="fq" placeholder="Buscar concepto o folio…" value="${esc(S.q)}">` : ''}</div>`}`;
+  const opsC = [...(sinTodos ? [] : [[0, 'Todos los cargos']]), ...cargosDe().map(c => [c, CARGOS[c]]), ...(conCan ? [[-1, 'CANCÚN']] : [])];
+  return `<div class="tb">${us.length > 1 && !opc.sinUnidades ? `<div class="chips">${us.map(u => [u, nomU(u)]).map(u => `<button class="chip ${S.unidad === u[0] ? 'on' : ''}" data-u="${u[0]}">${u[1]}</button>`).join('')}</div>` : ''}
+  <select id="fcg" title="Cargo">${opsC.map(c => `<option value="${c[0]}" ${S.cargo === c[0] ? 'selected' : ''}>${c[0] === 0 ? c[1] : 'Cargo: ' + c[1]}</option>`).join('')}</select>
+  ${opc.soloChips ? '' : `<select id="fm"><option value="">Todo el año</option>${meses}</select>${conBuscar ? `<input id="fq" placeholder="Buscar concepto o folio…" value="${esc(S.q)}">` : ''}`}</div>`;
 }
 function ligaFiltros(rerender) {
   document.querySelectorAll('.chip[data-u]').forEach(b => b.onclick = () => { S.unidad = b.dataset.u; S.cargo = 0; rerender(); });
-  document.querySelectorAll('.chip[data-c]').forEach(b => b.onclick = () => { S.cargo = +b.dataset.c; rerender(); });
+  const fcg = $('#fcg'); if (fcg) fcg.onchange = e => { S.cargo = +e.target.value; rerender(); };
   const fm = $('#fm'); if (fm) fm.onchange = e => { S.mes = e.target.value; rerender(); };
   const q = $('#fq'); if (q) q.oninput = e => { S.q = e.target.value; clearTimeout(ligaFiltros.t); ligaFiltros.t = setTimeout(() => { rerender(); const n = $('#fq'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } }, 250); };
 }
