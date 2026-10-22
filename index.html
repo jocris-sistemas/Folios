@@ -181,6 +181,10 @@ async function cargarExtra() {
       if (!b.error) S.villasBaja = b.data || [];
       const cu = await sb.from('cancun_cuentas').select('id,beneficiario,banco,cuenta,nota').eq('activo', true);
       if (!cu.error) S.cuentasCn = cu.data || [];
+      S.repCn = {};
+      const pg = async (t, c) => { let o = [], f = 0; for (;;) { const r = await sb.from(t).select(c).range(f, f + 999); if (r.error) return null; o = o.concat(r.data); if (r.data.length < 1000) return o; f += 1000; } };
+      const gc = await pg('cancun_gastos_comp', 'id,id_mov'), rp = await pg('cancun_reparto', 'id_gasto,villa,monto');
+      if (gc && rp) { const m = {}; gc.forEach(g => m[g.id] = g.id_mov); rp.forEach(x => { const k = m[x.id_gasto]; if (k) (S.repCn[k] = S.repCn[k] || []).push({ villa: x.villa, monto: Number(x.monto) }); }); Object.values(S.repCn).forEach(l => l.sort((p, q) => p.villa.localeCompare(q.villa))); }
     } catch (e) { }
   }
 }
@@ -539,7 +543,7 @@ function bannerSrv() {
   if (!veCancun()) return '';
   const u = srvUrg(); if (!u.length) return '';
   const v = u.filter(x => x.estado === 'VENCIDO').length;
-  return `<div id="bsrv" class="msg err" style="cursor:pointer;margin:8px 12px">${v ? `Servicios vencidos: ${v}. ` : ''}Servicios por vencer en 7 días o menos: ${u.length - v}. Ver detalle en Cancún.</div>`;
+  return `<div style="text-align:right;margin:2px 12px"><span id="bsrv" title="Servicios por atender. Ver detalle en Cancún." style="cursor:pointer;display:inline-block;font-size:11px;line-height:1.6;padding:0 8px;border-radius:10px;background:#fce8e6;color:#b3261e">${v ? `Vencidos: ${v} · ` : ''}Por vencer: ${u.length - v}</span></div>`;
 }
 function panelServicios() {
   const sv = S.srv || []; if (!sv.length && !(S.villasBaja || []).length) return '';
@@ -584,6 +588,15 @@ function imprimeFoliosCancun(lista) {
     let y = 158 + n * 11 + 6; d.setDrawColor(215); d.line(M, y, R, y);
     y += 18; d.setDrawColor(...NAVY); d.setLineWidth(0.8); d.line(M, y - 8, R, y - 8);
     d.setFontSize(9); d.setTextColor(...NAVY); d.text('TOTAL', M + 340, y + 6); d.setTextColor(20); d.text(money(r.monto), R - 6, y + 6, { align: 'right' });
+    const rp = (S.repCn || {})[r.id];
+    if (rp && rp.length) {
+      y += 34; d.setFont('helvetica', 'bold'); d.setTextColor(...NAVY); d.setFontSize(10); d.text('REPARTO ENTRE VILLAS', M, y);
+      d.setFontSize(7.5); d.setTextColor(120); d.text('VILLA', M, y + 15); d.text('MONTO', M + 300, y + 15, { align: 'right' }); d.text('%', M + 340, y + 15, { align: 'right' });
+      d.setDrawColor(215); d.setLineWidth(0.5); d.line(M, y + 19, M + 345, y + 19);
+      d.setFont('helvetica', 'normal'); d.setFontSize(9); d.setTextColor(30);
+      rp.forEach((x, k) => { const yy = y + 32 + k * 13; d.text(String(x.villa), M, yy); d.text(money(x.monto), M + 300, yy, { align: 'right' }); d.text((x.monto / (Number(r.monto) || 1) * 100).toFixed(1).replace(/\.0$/, '') + '%', M + 340, yy, { align: 'right' }); });
+      y += 32 + (rp.length - 1) * 13; d.setFont('helvetica', 'bold');
+    }
     y += 34; d.setTextColor(...NAVY); d.setFontSize(10); d.text('DATOS BANCARIOS', M, y);
     const c = cuentaDe(r); d.setTextColor(0); d.setFontSize(11);
     if (c) { d.text(String(c.banco || '') + ' ' + fmtCuenta(c.cuenta), M, y + 17); if (c.nota) { d.setFont('helvetica', 'normal'); d.setFontSize(8); d.text(String(c.nota), M, y + 30); } }
@@ -608,7 +621,7 @@ function vCancun() {
   <input id="cq" placeholder="Buscar concepto, villa o folio…" value="${esc(C.q)}"></div>
   <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> registros · <b>${money(tot)}</b>${pendT ? ` <span class="mut">(sin incluir ${money(pendT)} pendiente de pago)</span>` : ''}</div><div class="row"><button class="btn gold" id="cnew">Nuevo folio</button><button class="btn sec" id="cpi">Imprimir seleccionados (0)</button><button class="btn sec" id="cx">Descargar Excel</button></div></div>
   <div class="tw"><table><thead><tr><th><input type="checkbox" id="cka" title="Seleccionar todos"></th><th>Fecha</th><th>Folio</th><th>Cargo</th><th>Concepto</th><th>Categoría</th><th>Villa</th><th class="n">Monto</th><th>Pago y semana</th><th></th></tr></thead><tbody>
-  ${rows.map(r => `<tr><td>${r.tipo === 'EGRESO' ? `<input type="checkbox" class="ckf" data-i="${esc(r.id)}" ${S.cnSel[r.id] ? 'checked' : ''}>` : ''}</td><td>${fFecha(r.fecha || '')}</td><td class="folio">${esc(r.folio || '')}</td><td>${esc(r.cargo || '')}</td><td class="wrap">${esc(r.concepto || '')}</td><td>${esc(r.categoria || '')}</td><td>${esc(r.villa || '')}</td><td class="n">${money(r.monto)}</td><td>${r.pagado === false ? '<span class="badge b-bad">Pendiente de pago</span>' : (S.fpc && S.fpc[r.id] ? pagoBadgeFp(S.fpc[r.id]) : '')}</td><td>${r.tipo === 'EGRESO' ? `<button class="btn sec pim" data-i="${esc(r.id)}">Imprimir</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="10" class="mut">Sin registros con los filtros seleccionados.</td></tr>'}
+  ${rows.map(r => `<tr><td>${r.tipo === 'EGRESO' ? `<input type="checkbox" class="ckf" data-i="${esc(r.id)}" ${S.cnSel[r.id] ? 'checked' : ''}>` : ''}</td><td>${fFecha(r.fecha || '')}</td><td class="folio">${esc(r.folio || '')}</td><td>${esc(r.cargo || '')}</td><td class="wrap">${esc(r.concepto || '')}</td><td>${esc(r.categoria || '')}</td><td>${esc(r.villa || '')}${(S.repCn || {})[r.id] ? '<div class="mut" style="font-size:11px">' + S.repCn[r.id].map(x => esc(x.villa) + ' ' + money(x.monto)).join(' · ') + '</div>' : ''}</td><td class="n">${money(r.monto)}</td><td>${r.pagado === false ? '<span class="badge b-bad">Pendiente de pago</span>' : (S.fpc && S.fpc[r.id] ? pagoBadgeFp(S.fpc[r.id]) : '')}</td><td>${r.tipo === 'EGRESO' ? `<button class="btn sec pim" data-i="${esc(r.id)}">Imprimir</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="10" class="mut">Sin registros con los filtros seleccionados.</td></tr>'}
   <tr class="tot"><td colspan="7">TOTAL</td><td class="n">${money(tot)}</td><td></td><td></td></tr></tbody></table></div>`;
   document.querySelectorAll('#cs button').forEach(b => b.onclick = () => { C.sub = b.dataset.s; vCancun(); });
   const selN = () => { const n = rows.filter(r => S.cnSel[r.id]).length; $('#cpi').textContent = 'Imprimir seleccionados (' + n + ')'; };
@@ -1017,6 +1030,9 @@ function leerLibro(wb, unidad) {
   res.filas = res.filas.filter(f => !f.rep);
   return res;
 }
+const cambiosVis = im => im.cambios.map((x, i) => ({ x, i })).filter(({ x }) => !im.cf || (im.cf === 'iva') === !!x.iva);
+const chipsCambios = im => { const ni = im.cambios.filter(x => x.iva).length; return `<div class="chips" style="margin:0 0 8px">${[['', 'Todas', im.cambios.length], ['iva', 'Posible IVA', ni], ['otras', 'Otras diferencias', im.cambios.length - ni]].map(c => `<button class="chip ${(im.cf || '') === c[0] ? 'on' : ''}" data-cf="${c[0]}">${c[1]} <b>${c[2]}</b></button>`).join('')}</div>`; };
+const ivaTxt = t => t === 'E' ? 'el Excel equivale al monto del sistema más 16 % de IVA' : 'el monto del sistema equivale al del Excel más 16 % de IVA';
 /* Compara contra lo que ya está en la app */
 function comparar(res) {
   const porFolio = {}, ya = {};
@@ -1029,11 +1045,11 @@ function comparar(res) {
     if (f.tipo === 'EGRESO' && f.folio) {
       const a = porFolio[f.unidad + '|' + f.cargo_id + '|' + f.folio];
       if (!a) { nuevos.push({ ...f, categoria: f.categoria || catSugerida(f.cargo_id, f.concepto), incl: true }); return; }
-      const dif = [];
+      const dif = []; let ivaT = '';
       if (a.fecha !== f.fecha) dif.push(['Fecha', a.fecha.split('-').reverse().join('/'), f.fecha.split('-').reverse().join('/')]);
-      if (Math.abs(Number(a.monto) - f.monto) > 0.004) { const q = f.monto / Number(a.monto); dif.push(['Monto', money(a.monto), money(f.monto), (q > 8 && q < 12) || (q > 1 / 12 && q < 1 / 8) ? 'posible dígito de más o de menos; verificar el monto correcto' : '']); }
+      if (Math.abs(Number(a.monto) - f.monto) > 0.004) { const q = f.monto / Number(a.monto); ivaT = Math.abs(r2(Number(a.monto) * 1.16) - f.monto) <= 0.02 ? 'E' : Math.abs(r2(f.monto * 1.16) - Number(a.monto)) <= 0.02 ? 'S' : ''; dif.push(['Monto', money(a.monto), money(f.monto), (q > 8 && q < 12) || (q > 1 / 12 && q < 1 / 8) ? 'posible dígito de más o de menos; verificar el monto correcto' : '']); }
       if (norm(a.concepto) !== norm(f.concepto)) dif.push(['Concepto', a.concepto, f.concepto.toUpperCase()]);
-      if (dif.length) cambios.push({ ...f, id: a.id, dif, incl: false }); else iguales.push(f);
+      if (dif.length) cambios.push({ ...f, id: a.id, dif, incl: false, iva: dif.length === 1 && dif[0][0] === 'Monto' ? ivaT : '', sis: { fecha: a.fecha, monto: Number(a.monto), concepto: a.concepto } }); else iguales.push(f);
       return;
     }
     const k = [f.unidad, f.cargo_id, f.tipo, f.fecha, norm(f.concepto), f.monto.toFixed(2)].join('|');
@@ -1055,7 +1071,72 @@ function comparar(res) {
   cambios.sort((a, b) => a.cargo_id - b.cargo_id || a.folio - b.folio);
   return { ...res, avisos, nuevos, iguales, cambios, soloApp, vista: cambios.length ? 'cambios' : 'nuevos' };
 }
+const subImp = () => `<div class="chips" style="margin-bottom:10px"><button class="chip ${S.impSub !== 'hist' ? 'on' : ''}" data-isub="subir">Importar archivo</button><button class="chip ${S.impSub === 'hist' ? 'on' : ''}" data-isub="hist">Historial y diferencias <b id="hpend" class="${S.hist && S.hist.pend ? 'neg' : ''}">${S.hist ? S.hist.pend : ''}</b></button></div>`;
+async function cargaHist() {
+  const a = await sb.from('folios_importaciones').select('*').order('id', { ascending: false }).limit(30);
+  if (a.error) throw a.error;
+  let all = [], from = 0;
+  for (;;) {
+    const { data, error } = await sb.from('folios_import_difs').select('*').order('id').range(from, from + 999);
+    if (error) throw error;
+    all = all.concat(data); if (data.length < 1000) break; from += 1000;
+  }
+  S.hist = { imps: a.data, difs: all, pend: all.filter(d => d.estado === 'pendiente').length };
+}
+const HF = { est: 'pendiente', clase: '', q: '', sel: {} };
+const fmtDif = (c, v) => v == null ? '' : c === 'Fecha' ? v.split('-').reverse().join('/') : c === 'Monto' ? money(Number(v)) : v;
+async function vImpHist() {
+  if (!S.hist) { $('#m').innerHTML = `${subImp()}<div class="msg info">Cargando…</div>`; try { await cargaHist(); } catch (e) { $('#m').innerHTML = `${subImp()}<div class="msg err">No fue posible cargar el historial: ${esc(e.message || e)}</div>`; document.querySelectorAll('[data-isub]').forEach(b => b.onclick = () => { S.impSub = b.dataset.isub; vImportar(); }); return; } }
+  const H = S.hist, mov = {}; S.rows.forEach(r => mov[r.id] = r);
+  const actual = d => { const r = mov[d.mov_id]; if (!r) return null; return d.campo === 'Fecha' ? r.fecha : d.campo === 'Monto' ? Number(r.monto).toFixed(2) : String(r.concepto || '').toUpperCase(); };
+  const q = HF.q.trim().toLowerCase();
+  const rows = H.difs.filter(d => d.estado === HF.est && (!HF.clase || (HF.clase === 'iva') === (d.clase === 'IVA')) && (!q || String(d.folio).includes(q) || (CARGOS[d.cargo_id] || '').toLowerCase().includes(q) || fmtDif(d.campo, d.valor_excel).toLowerCase().includes(q)))
+    .sort((a, b) => a.cargo_id - b.cargo_id || (a.folio || 0) - (b.folio || 0) || a.id - b.id);
+  const cnt = e => H.difs.filter(d => d.estado === e).length, nIva = H.difs.filter(d => d.estado === HF.est && d.clase === 'IVA').length, nTot = H.difs.filter(d => d.estado === HF.est).length;
+  const selIds = rows.filter(d => HF.sel[d.id]).map(d => d.id);
+  const imp = id => H.imps.find(i => i.id === id);
+  const chip = (k, v, l, n) => `<button class="chip ${HF[k] === v ? 'on' : ''}" data-hf="${k}|${v}">${l} <b>${n}</b></button>`;
+  $('#m').innerHTML = `${subImp()}
+  <div class="card"><b>Diferencias entre los archivos Excel y el sistema</b>
+    <p class="mut" style="margin:6px 0 10px">Cada importación guarda las diferencias detectadas. Las pendientes pueden aplicarse (se conserva el valor anterior en la bitácora) o descartarse (se conserva el valor del sistema). Nada se elimina.</p>
+    <div class="chips">${chip('est', 'pendiente', 'Pendientes', cnt('pendiente'))}${chip('est', 'aplicada', 'Aplicadas', cnt('aplicada'))}${chip('est', 'descartada', 'Descartadas', cnt('descartada'))}</div>
+    <div class="chips" style="margin-top:8px">${chip('clase', '', 'Todas', nTot)}${chip('clase', 'iva', 'Posible IVA', nIva)}${chip('clase', 'otras', 'Otras diferencias', nTot - nIva)}</div>
+    <div class="row" style="margin-top:10px;gap:8px;align-items:center"><input id="hq" placeholder="Buscar folio, cargo o monto…" value="${esc(HF.q)}" style="max-width:280px">
+      ${HF.est === 'pendiente' ? `<button class="btn gold" id="hap" ${selIds.length ? '' : 'disabled'}>Aplicar valor del Excel (${selIds.length})</button><button class="btn sec" id="hds" ${selIds.length ? '' : 'disabled'}>Descartar, conservar sistema (${selIds.length})</button>` : HF.est === 'descartada' ? `<button class="btn sec" id="hre" ${selIds.length ? '' : 'disabled'}>Reabrir (${selIds.length})</button>` : ''}</div>
+    <div id="hmsg"></div></div>
+  ${rows.length ? `<div class="tw"><table><thead><tr><th>${HF.est === 'aplicada' ? '' : `<input type="checkbox" id="htod" ${rows.every(d => HF.sel[d.id]) ? 'checked' : ''} style="width:auto">`}</th><th>Cargo</th><th class="n">Folio</th><th>Campo</th><th>Sistema al importar</th><th>Sistema actual</th><th>Excel</th><th>Origen</th></tr></thead><tbody>
+    ${rows.map(d => { const ac = actual(d), im2 = imp(d.importacion_id); return `<tr><td>${HF.est === 'aplicada' ? '' : `<input type="checkbox" data-hs="${d.id}" ${HF.sel[d.id] ? 'checked' : ''} style="width:auto">`}</td><td>${CARGOS[d.cargo_id] || ''}</td><td class="n folio">${d.folio || ''}</td>
+      <td>${d.campo}${d.clase === 'IVA' ? `<div class="badge b-no" style="white-space:normal">Posible IVA</div>` : ''}</td><td class="wrap">${esc(fmtDif(d.campo, d.valor_sistema))}</td>
+      <td class="wrap">${ac == null ? '<span class="mut">no activo</span>' : esc(fmtDif(d.campo, ac))}${ac != null && ac === d.valor_excel && d.estado === 'pendiente' ? '<div class="badge b-ok">Ya coincide con el Excel</div>' : ''}</td><td class="wrap"><b>${esc(fmtDif(d.campo, d.valor_excel))}</b></td>
+      <td class="mut">${im2 ? esc(im2.archivo || '') + '<br>' + new Date(im2.creado_en).toLocaleDateString('es-MX') : ''}${d.hoja ? '<br>' + esc(d.hoja) + ' · ' + (d.fila || '') : ''}</td></tr>`; }).join('')}</tbody></table></div>` : '<p class="mut">No hay diferencias en esta vista.</p>'}
+  <div class="card" style="margin-top:12px"><b>Últimas importaciones</b><div class="tw"><table><thead><tr><th>Fecha</th><th>Archivo</th><th>Usuario</th><th class="n">Nuevos</th><th class="n">Actualizados</th><th class="n">Con diferencias</th></tr></thead><tbody>
+    ${H.imps.length ? H.imps.map(i => `<tr><td>${new Date(i.creado_en).toLocaleString('es-MX')}</td><td class="wrap">${esc(i.archivo || '')}</td><td>${esc(i.usuario_nombre || '')}</td><td class="n">${(i.resumen || {}).nuevos ?? ''}</td><td class="n">${(i.resumen || {}).cambios ?? ''}</td><td class="n">${(i.resumen || {}).con_diferencias ?? ''}</td></tr>`).join('') : '<tr><td colspan="6" class="mut">Sin importaciones registradas.</td></tr>'}</tbody></table></div></div>`;
+  document.querySelectorAll('[data-isub]').forEach(b => b.onclick = () => { S.impSub = b.dataset.isub; vImportar(); });
+  document.querySelectorAll('[data-hf]').forEach(b => b.onclick = () => { const [k, v] = b.dataset.hf.split('|'); HF[k] = v; if (k === 'est') HF.sel = {}; vImpHist(); });
+  $('#hq').oninput = e => { HF.q = e.target.value; clearTimeout(vImpHist.t); vImpHist.t = setTimeout(() => { vImpHist().then(() => { const n = $('#hq'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } }); }, 350); };
+  document.querySelectorAll('[data-hs]').forEach(c => c.onchange = () => { HF.sel[c.dataset.hs] = c.checked; vImpHist(); });
+  if ($('#htod')) $('#htod').onchange = e => { rows.forEach(d => HF.sel[d.id] = e.target.checked); vImpHist(); };
+  const fin = async (txt) => { HF.sel = {}; await cargar(); await cargaHist(); await vImpHist(); $('#hmsg').innerHTML = `<div class="msg ok">${txt}</div>`; };
+  const resolver = async (estado, txt) => { const { error } = await sb.rpc('folios_import_resolver', { p_ids: selIds, p_estado: estado }); if (error) return $('#hmsg').innerHTML = `<div class="msg err">${esc(error.message)}</div>`; await fin(txt); };
+  if ($('#hds')) $('#hds').onclick = () => { if (confirm(`Se descartarán ${selIds.length} diferencia(s) y se conservará el valor del sistema. ¿Continuar?`)) resolver('descartada', 'Diferencias descartadas. Se conserva el valor del sistema.'); };
+  if ($('#hre')) $('#hre').onclick = () => resolver('pendiente', 'Diferencias reabiertas.');
+  if ($('#hap')) $('#hap').onclick = async () => {
+    const ds = rows.filter(d => HF.sel[d.id]), por = {};
+    ds.forEach(d => { const o = por[d.mov_id] = por[d.mov_id] || { id: d.mov_id }; if (d.campo === 'Fecha') o.fecha = d.valor_excel; else if (d.campo === 'Monto') o.monto = d.valor_excel; else o.concepto = d.valor_excel; });
+    if (!confirm(`Se aplicarán ${ds.length} diferencia(s) en ${Object.keys(por).length} folio(s) con el valor del Excel. El valor anterior se conservará en la bitácora. ¿Continuar?`)) return;
+    const b = $('#hap'); b.disabled = true; b.textContent = 'Aplicando…';
+    const lote = 'dif-' + new Date().toISOString().replace(/\D/g, '').slice(0, 14);
+    const { data, error } = await sb.rpc('folios_sincronizar', { p_unidad: S.impU || 'PLATON', p_nuevos: [], p_cambios: Object.values(por), p_lote: lote });
+    if (error) { b.disabled = false; b.textContent = 'Reintentar'; return $('#hmsg').innerHTML = `<div class="msg err">${esc(error.message)}</div>`; }
+    const om = data.omitidos || [];
+    if (om.length) $('#hmsg').innerHTML = `<div class="msg info">Algunos folios no se modificaron:<br>${om.map(esc).join('<br>')}</div>`;
+    const { error: e2 } = await sb.rpc('folios_import_resolver', { p_ids: selIds, p_estado: 'aplicada' });
+    if (e2) return $('#hmsg').innerHTML += `<div class="msg err">${esc(e2.message)}</div>`;
+    await fin(`Se aplicaron ${data.cambios} folio(s) actualizado(s).${om.length ? '<br>Avisos:<br>' + om.map(esc).join('<br>') : ''}`);
+  };
+}
 function vImportar() {
+  if (S.impSub === 'hist') return vImpHist();
   const im = S.imp, uns = soloFolios() ? ['PLATON'] : [...new Set(['PLATON', ...unidades(), ...((S.cap && S.cap.extra) || [])])];
   const cats = [...new Set(S.rows.filter(r => r.categoria).map(r => r.categoria))].sort();
   const nN = im ? im.nuevos.filter(x => x.incl).length : 0, nC = im ? im.cambios.filter(x => x.incl).length : 0;
@@ -1064,9 +1145,9 @@ function vImportar() {
       ${im.nuevos.map((x, i) => `<tr style="${x.incl ? '' : 'opacity:.5'}"><td><input type="checkbox" data-n="${i}" ${x.incl ? 'checked' : ''} style="width:auto"></td><td>${CARGOS[x.cargo_id]}</td><td>${x.tipo === 'EGRESO' ? 'Folio' : 'Ingreso'}</td><td class="n folio">${x.folio || (x.tipo === 'EGRESO' ? '<span class="mut">auto</span>' : '')}</td><td>${x.fecha.split('-').reverse().join('/')}</td><td class="wrap">${esc(x.concepto)}</td>
       <td class="n">${money(x.monto)}</td><td class="mut">${esc(x.hoja)} · ${x.fila}</td></tr>`).join('')}
       </tbody></table><datalist id="catsI">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>` : '<p class="mut">No hay movimientos nuevos en el archivo.</p>';
-    if (im.vista === 'cambios') return im.cambios.length ? `<p class="mut" style="margin:0 0 8px">Folios registrados con datos distintos en el Excel. Solo se aplican los cambios seleccionados; el valor anterior se conserva en la bitácora.</p>
-      <div class="tw"><table><thead><tr><th><input type="checkbox" id="todosC" ${im.cambios.every(x => x.incl) ? 'checked' : ''} style="width:auto"></th><th>Cargo</th><th class="n">Folio</th><th>Campo</th><th>En el sistema</th><th>En el Excel</th><th>Hoja</th></tr></thead><tbody>
-      ${im.cambios.map((x, i) => x.dif.map((d, j) => `<tr>${j === 0 ? `<td rowspan="${x.dif.length}"><input type="checkbox" data-c="${i}" ${x.incl ? 'checked' : ''} style="width:auto"></td><td rowspan="${x.dif.length}">${CARGOS[x.cargo_id]}</td><td rowspan="${x.dif.length}" class="n folio">${x.folio}</td>` : ''}<td>${d[0]}${d[3] ? `<div class="badge b-bad" style="white-space:normal">⚠ ${d[3]}</div>` : ''}</td><td class="wrap">${esc(d[1])}</td><td class="wrap"><b>${esc(d[2])}</b></td>${j === 0 ? `<td rowspan="${x.dif.length}" class="mut">${esc(x.hoja)} · ${x.fila}</td>` : ''}</tr>`).join('')).join('')}
+    if (im.vista === 'cambios') return im.cambios.length ? `<p class="mut" style="margin:0 0 8px">Folios registrados con datos distintos en el Excel. Solo se aplican los cambios seleccionados; el valor anterior se conserva en la bitácora. Las diferencias no aplicadas se guardan en «Historial y diferencias» para revisarlas después.</p>${chipsCambios(im)}
+      <div class="tw"><table><thead><tr><th><input type="checkbox" id="todosC" ${cambiosVis(im).every(({ x }) => x.incl) ? 'checked' : ''} style="width:auto"></th><th>Cargo</th><th class="n">Folio</th><th>Campo</th><th>En el sistema</th><th>En el Excel</th><th>Hoja</th></tr></thead><tbody>
+      ${cambiosVis(im).map(({ x, i }) => x.dif.map((d, j) => `<tr>${j === 0 ? `<td rowspan="${x.dif.length}"><input type="checkbox" data-c="${i}" ${x.incl ? 'checked' : ''} style="width:auto"></td><td rowspan="${x.dif.length}">${CARGOS[x.cargo_id]}</td><td rowspan="${x.dif.length}" class="n folio">${x.folio}</td>` : ''}<td>${d[0]}${x.iva && d[0] === 'Monto' ? `<div class="badge b-no" style="white-space:normal">Posible IVA: ${ivaTxt(x.iva)}</div>` : ''}${d[3] ? `<div class="badge b-bad" style="white-space:normal">⚠ ${d[3]}</div>` : ''}</td><td class="wrap">${esc(d[1])}</td><td class="wrap"><b>${esc(d[2])}</b></td>${j === 0 ? `<td rowspan="${x.dif.length}" class="mut">${esc(x.hoja)} · ${x.fila}</td>` : ''}</tr>`).join('')).join('')}
       </tbody></table></div>` : '<p class="mut">Sin diferencias entre el sistema y el Excel.</p>';
     if (im.vista === 'iguales') return `<p class="mut">${im.iguales.length} renglones del archivo ya registrados sin diferencias.</p>`;
     if (im.vista === 'soloapp') return im.soloApp.length ? `<p class="mut" style="margin:0 0 8px">Folios del sistema, de los mismos meses y cargos, que <b>no aparecen en el Excel</b>. No se modifican.</p><div class="tw"><table><thead><tr><th>Cargo</th><th class="n">Folio</th><th>Fecha</th><th>Concepto</th><th class="n">Monto</th></tr></thead><tbody>${im.soloApp.map(r => `<tr><td>${CARGOS[r.cargo_id]}</td><td class="n folio">${r.folio}</td><td>${r.fecha.split('-').reverse().join('/')}</td><td class="wrap">${esc(r.concepto)}</td><td class="n">${money(r.monto)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="mut">Todos los folios del sistema en esos meses aparecen en el Excel.</p>';
@@ -1075,15 +1156,17 @@ function vImportar() {
       ${im.ignorados.length ? `<div class="msg info"><b>Secciones omitidas del archivo:</b><br>${im.ignorados.map(esc).join('<br>')}</div>` : ''}`;
   };
   const pest = (k, l, n, cls) => `<button class="chip ${im.vista === k ? 'on' : ''}" data-v="${k}">${l} <b class="${cls || ''}">${n}</b></button>`;
-  $('#m').innerHTML = `<div class="card"><b>Importar Excel de folios</b>
+  $('#m').innerHTML = `${subImp()}<div class="card"><b>Importar Excel de folios</b>
   <p class="mut" style="margin:6px 0 12px">Formatos admitidos: <b>FOLIOS 2026.xls</b> (una hoja por mes, un bloque por cargo) o tabla con columnas FECHA, CARGO, CONCEPTO y MONTO. Los registros existentes no se duplican ni se eliminan.</p>
   <label>Unidad del archivo</label><select id="iu">${uns.map(u => `<option value="${u}" ${(S.impU || 'PLATON') === u ? 'selected' : ''}>${nomU(u)}</option>`).join('')}</select>
   <div class="drop" style="margin-top:12px"><input type="file" id="fx" accept=".xls,.xlsx,.xlsm,.csv"></div><div id="res"></div></div>
   ${im ? `<div class="card"><div class="row" style="justify-content:space-between;align-items:center"><div><b>${esc(im.archivo)}</b> · <span class="mut">${im.filas.length} renglones leídos de ${im.hojas} hoja(s)</span></div>
-    <button class="btn gold" id="go" ${nN + nC ? '' : 'disabled'}>${nN + nC ? `Guardar ${nN ? nN + ' nuevo' + (nN === 1 ? '' : 's') : ''}${nN && nC ? ' y ' : ''}${nC ? nC + ' cambio' + (nC === 1 ? '' : 's') : ''}` : 'Sin cambios por guardar'}</button></div>
+    <button class="btn gold" id="go" ${nN + nC || im.cambios.length ? '' : 'disabled'}>${nN + nC ? `Guardar ${nN ? nN + ' nuevo' + (nN === 1 ? '' : 's') : ''}${nN && nC ? ' y ' : ''}${nC ? nC + ' cambio' + (nC === 1 ? '' : 's') : ''}` : (im.cambios.length ? 'Registrar diferencias para revisión' : 'Sin cambios por guardar')}</button></div>
     <div class="chips" style="margin-top:10px">${pest('nuevos', 'Nuevos', im.nuevos.length, 'pos')}${pest('cambios', 'Con diferencias', im.cambios.length, im.cambios.length ? 'neg' : '')}${pest('iguales', 'Sin cambios', im.iguales.length)}${pest('soloapp', 'Solo en el sistema', im.soloApp.length)}${pest('revision', 'Errores y avisos', im.errores.length + im.avisos.length, im.errores.length ? 'neg' : '')}</div></div>
     ${im.errores.length && im.vista !== 'revision' ? `<div class="msg err">${im.errores.length} renglón(es) con error no se importarán. <a href="#" data-v="revision">Ver detalle</a></div>` : ''}
     ${tabla()}` : ''}`;
+  document.querySelectorAll('[data-isub]').forEach(b => b.onclick = () => { S.impSub = b.dataset.isub; vImportar(); });
+  if (!S.hist) cargaHist().then(() => { const n = $('#hpend'); if (n) { n.textContent = S.hist.pend; n.className = S.hist.pend ? 'neg' : ''; } }).catch(() => { });
   $('#iu').onchange = e => { S.impU = e.target.value; if (S.imp) { S.imp = null; vImportar(); } };
   $('#fx').onchange = async e => {
     const f = e.target.files[0]; if (!f) return; e.target.value = '';
@@ -1102,7 +1185,8 @@ function vImportar() {
   document.querySelectorAll('input[data-c]').forEach(c => c.onchange = () => { im.cambios[+c.dataset.c].incl = c.checked; vImportar(); });
   document.querySelectorAll('input[data-cat]').forEach(c => c.onchange = () => { im.nuevos[+c.dataset.cat].categoria = norm(c.value); });
   if ($('#todosN')) $('#todosN').onchange = e => { im.nuevos.forEach(x => x.incl = e.target.checked); vImportar(); };
-  if ($('#todosC')) $('#todosC').onchange = e => { im.cambios.forEach(x => x.incl = e.target.checked); vImportar(); };
+  if ($('#todosC')) $('#todosC').onchange = e => { cambiosVis(im).forEach(({ x }) => x.incl = e.target.checked); vImportar(); };
+  document.querySelectorAll('[data-cf]').forEach(b => b.onclick = () => { im.cf = b.dataset.cf; vImportar(); });
   $('#go').onclick = async () => {
     const nuevos = im.nuevos.filter(x => x.incl), cambios = im.cambios.filter(x => x.incl);
     if (cambios.length && !confirm(`Se actualizarán ${cambios.length} folio(s) existentes con los datos del Excel. El valor anterior se conservará en la bitácora. ¿Continuar?`)) return;
@@ -1121,8 +1205,19 @@ function vImportar() {
       b.disabled = false; b.textContent = 'Reintentar';
       return $('#res').innerHTML = `<div class="msg err">${esc(er.message || er)}<br>Registros guardados antes del error: ${tot.nuevos} nuevos y ${tot.cambios} cambios. Al cargar de nuevo el mismo archivo, lo ya guardado aparecerá en «Sin cambios» sin duplicarse.</div>`;
     }
+    let avisoH = '';
+    try {
+      const valN = (c, o) => c === 'Fecha' ? o.fecha : c === 'Monto' ? Number(o.monto).toFixed(2) : String(o.concepto || '').toUpperCase(), D = [];
+      im.cambios.forEach(x => x.dif.forEach(d => D.push({ mov_id: x.id, cargo_id: x.cargo_id, folio: x.folio, campo: d[0], valor_sistema: valN(d[0], x.sis), valor_excel: valN(d[0], x), clase: x.iva && d[0] === 'Monto' ? 'IVA' : 'OTRA',
+        nota: x.iva && d[0] === 'Monto' ? ivaTxt(x.iva).toUpperCase() : null, hoja: x.hoja, fila: x.fila, estado: x.incl ? 'aplicada' : 'pendiente' })));
+      const { error } = await sb.rpc('folios_import_registrar', { p_unidad: S.impU || 'PLATON', p_archivo: im.archivo, p_lote: lote, p_resumen: { nuevos: tot.nuevos, cambios: tot.cambios, iguales: im.iguales.length, con_diferencias: im.cambios.length, pendientes: D.filter(d => d.estado === 'pendiente').length }, p_difs: D });
+      if (error) throw error;
+      const pend = D.filter(d => d.estado === 'pendiente').length;
+      if (pend) avisoH = `<br>Quedaron ${pend} diferencia(s) pendientes de revisión en «Historial y diferencias».`;
+      S.hist = null;
+    } catch (er) { avisoH = `<br><b>No fue posible registrar el historial de diferencias:</b> ${esc(er.message || er)}`; }
     S.imp = null; await cargar(); vImportar();
-    $('#res').innerHTML = `<div class="msg ok">Importación concluida: ${tot.nuevos} movimiento(s) nuevo(s) y ${tot.cambios} folio(s) actualizado(s).${tot.omitidos.length ? `<br><b>Registros no guardados (${tot.omitidos.length}):</b><br>${tot.omitidos.map(esc).join('<br>')}` : ''}</div>`;
+    $('#res').innerHTML = `<div class="msg ok">Importación concluida: ${tot.nuevos} movimiento(s) nuevo(s) y ${tot.cambios} folio(s) actualizado(s).${avisoH}${tot.omitidos.length ? `<br><b>Registros no guardados (${tot.omitidos.length}):</b><br>${tot.omitidos.map(esc).join('<br>')}` : ''}</div>`;
   };
 }
 
