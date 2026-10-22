@@ -543,9 +543,9 @@ function panelServicios() {
   const bd = x => x.estado === 'PAGADO' ? '<span class="badge b-ok">Pagado</span>' : x.estado === 'VENCIDO' ? '<span class="badge b-bad">Vencido</span>' : x.estado === 'POR VENCER' ? '<span class="badge b-bad">Por vencer</span>' : x.estado === 'POR PAGAR' ? '<span class="badge b-no">Por pagar</span>' : '<span class="badge b-no">Baja</span>';
   const lim = x => x.estado === 'PAGADO' ? 'Próximo corte ' + fFecha(x.proximo_corte) : 'Vence ' + fFecha(x.limite) + (x.dias_para_limite >= 0 ? ' (en ' + x.dias_para_limite + ' día(s))' : ' (hace ' + (-x.dias_para_limite) + ' día(s))');
   const ord = { VENCIDO: 0, 'POR VENCER': 1, 'POR PAGAR': 2, PAGADO: 3 };
-  return `<div class="card" style="max-width:none;margin:0 0 12px"><b>Servicios fijos · CFE</b>
-  <div class="tw"><table><thead><tr><th>Villa</th><th>No. de servicio</th><th>Estado</th><th>Plazo</th><th class="n">Importe del recibo</th><th>Último pago</th></tr></thead><tbody>
-  ${[...sv].sort((a, b) => (ord[a.estado] - ord[b.estado]) || String(a.limite).localeCompare(String(b.limite))).map(x => `<tr><td>${esc(x.villa)}</td><td>${esc(x.no_servicio || '')}</td><td>${bd(x)}</td><td>${lim(x)}</td><td class="n">${x.importe_recibo != null ? money(x.importe_recibo) : '—'}</td><td>${x.ultimo_pago ? fFecha(x.ultimo_pago) : ''}</td></tr>`).join('')}</tbody></table></div>
+  return `<div class="card" style="max-width:none;margin:0 0 12px"><b>Servicios fijos</b> <span class="mut">· CFE, Telmex y Telcel. Los importes de teléfono e internet requieren confirmación cada mes.</span>
+  <div class="tw"><table><thead><tr><th>Villa</th><th>Servicio</th><th>No. de servicio</th><th>Estado</th><th>Plazo</th><th class="n">Importe del recibo</th><th>Último pago</th></tr></thead><tbody>
+  ${[...sv].filter(x => x.estado !== 'BAJA').sort((a, b) => (ord[a.estado] - ord[b.estado]) || String(a.limite).localeCompare(String(b.limite))).map(x => `<tr><td>${esc(x.villa)}${x.nota ? ' <span class="mut">· ' + esc(x.nota) + '</span>' : ''}</td><td>${esc(x.servicio || '')}</td><td>${esc(x.no_servicio || '')}</td><td>${bd(x)}</td><td>${lim(x)}</td><td class="n">${x.importe_recibo != null ? money(x.importe_recibo) : (x.importe_variable ? 'Por confirmar' : '—')}</td><td>${x.ultimo_pago ? fFecha(x.ultimo_pago) : ''}</td></tr>`).join('')}</tbody></table></div>
   ${(S.villasBaja || []).length ? `<div class="mut" style="margin-top:8px">Sin pagos futuros: ${S.villasBaja.map(v => esc(v.villa) + ' (último pago ' + fFecha(v.ultimo_pago) + ')').join(' · ')}.</div>` : ''}</div>`;
 }
 function vCancun() {
