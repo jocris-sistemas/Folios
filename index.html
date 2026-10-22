@@ -130,6 +130,18 @@ async function cargar() {
     if (data.length < 1000) break; from += 1000;
   }
   S.medio = md;
+  S.fp = {}; S.fpc = {}; S.sug = {};
+  try {
+    from = 0;
+    for (;;) {
+      const { data, error } = await sb.from('folio_pago').select('origen_app,clave,medio,cheques,semana_efectivo,monto_efectivo,ref_medio,conflicto').range(from, from + 999);
+      if (error) break;
+      data.forEach(r => { if (r.origen_app === 'CANCUN') S.fpc[r.clave] = r; else S.fp[r.clave] = r; });
+      if (data.length < 1000) break; from += 1000;
+    }
+    const { data: sg } = await sb.from('folio_sugerencias').select('mov_id,tipo_sugerido,referencia,fecha_ref,ref_id,dif_dias,orden').lte('orden', 3).order('orden');
+    (sg || []).forEach(x => (S.sug[x.mov_id] = S.sug[x.mov_id] || []).push(x));
+  } catch (e) { }
   await cargarExtra();
 }
 async function cargarExtra() {
@@ -288,8 +300,32 @@ function bajarPDF(nombre, titulo, sub, cols, filas, pie, tam) {
   for (let i = 1; i <= n; i++) { doc.setPage(i); doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(120); doc.text('Página ' + i + ' de ' + n, W - M, H - 20, { align: 'right' }); }
   doc.save(nombre);
 }
-const pagoTxt = r => { const ch = S.cruce[r.cargo_id + '-' + r.folio], md = (S.medio || {})[r.id]; return ch ? 'Cheque ' + ch : md ? (md.medio === 'EFECTIVO' ? 'Efectivo' : md.medio) : 'Sin asignar'; };
-const pagoTipo = r => S.cruce[r.cargo_id + '-' + r.folio] ? 'CHEQUE' : ((S.medio || {})[r.id] ? 'EFECTIVO' : 'SIN');
+const fCorta = iso => iso ? iso.slice(8, 10) + '/' + iso.slice(5, 7) : '';
+const chTxt = a => (a || []).map(c => 'Cheque ' + c.numero + ' · ' + c.chequera).join(', ');
+const pagoTxtFp = p => !p ? '' : p.medio === 'CHEQUE' ? (p.cheques ? chTxt(p.cheques) : p.ref_medio || 'Cheque') : p.medio === 'EFECTIVO' ? 'Efectivo · semana ' + fCorta(p.semana_efectivo) : p.medio === 'SIN ASIGNAR' ? 'Sin asignar' : p.medio;
+const pagoBadgeFp = (p, sg) => !p ? '' : p.medio === 'SIN ASIGNAR'
+  ? `<span class="badge b-no">Sin asignar</span>${sg && sg[0] ? ` <span class="badge b-bad" title="Sugerencia por monto y fecha; confirmar en el detalle del folio">Sugerido: ${esc(sg[0].referencia)}</span>` : ''}`
+  : `<span class="badge b-ok" title="${esc(p.medio === 'EFECTIVO' && p.monto_efectivo != null ? 'Pagado en efectivo: ' + money(p.monto_efectivo) : p.ref_medio || '')}">${esc(pagoTxtFp(p))}</span>${p.conflicto ? ' <span class="badge b-bad" title="El folio aparece en un cheque y también en efectivo">Cheque y efectivo</span>' : ''}`;
+const pagoDetalleHTML = r => {
+  const p = S.fp && S.fp[r.id]; if (!p || soloFolios()) return '';
+  let h = '<h3 style="margin:16px 0 4px;font-size:15px">Pago y conexión</h3>';
+  if (p.medio === 'SIN ASIGNAR') {
+    h += '<div class="msg info">Este folio aún no tiene cheque ni semana de efectivo asignados.</div>';
+    const sg = (S.sug[r.id] || []);
+    if (sg.length) h += '<div class="mut" style="margin:4px 0">Sugerencias por monto y fecha:</div>' + sg.map((x, i) => `<div class="row" style="justify-content:space-between;margin:4px 0"><span>${esc(x.referencia)} <span class="mut">· ${fFecha(x.fecha_ref)} · ${x.dif_dias} día(s) de diferencia</span></span>${puedeCapturar() ? `<button class="btn sec" data-cf="${i}">Confirmar</button>` : ''}</div>`).join('');
+    else h += '<div class="mut">Sin sugerencias disponibles.</div>';
+    return h;
+  }
+  if (p.cheques && p.cheques.length) h += p.cheques.map(c => `<div style="margin:4px 0"><span class="badge b-ok">Cheque ${esc(c.numero)} · ${esc(c.chequera)}</span>${c.fecha ? ' <span class="mut">' + fFecha(c.fecha) + '</span>' : ''}</div>`).join('');
+  else if (p.medio === 'CHEQUE') h += `<div style="margin:4px 0"><span class="badge b-ok">${esc(p.ref_medio || 'Cheque')}</span></div>`;
+  if (p.semana_efectivo) h += `<div class="row" style="justify-content:space-between;margin:4px 0"><span><span class="badge b-ok">Efectivo · semana del ${fFecha(p.semana_efectivo)}</span>${p.monto_efectivo != null ? ' <span class="mut">' + money(p.monto_efectivo) + '</span>' : ''}</span><button class="btn sec" data-vs="${p.semana_efectivo}">Ver semana</button></div>`;
+  if (p.conflicto) h += '<div class="msg err">El folio aparece en un cheque y también en efectivo; conviene revisarlo.</div>';
+  return h;
+};
+const pagoTxt = r => { const pf = S.fp && S.fp[r.id]; if (pf) return pagoTxtFp(pf); return pagoTxtOld(r); };
+const pagoTipo = r => { const pf = S.fp && S.fp[r.id]; if (pf) return pf.medio === 'SIN ASIGNAR' ? 'SIN' : pf.medio; return pagoTipoOld(r); };
+const pagoTxtOld = r => { const ch = S.cruce[r.cargo_id + '-' + r.folio], md = (S.medio || {})[r.id]; return ch ? 'Cheque ' + ch : md ? (md.medio === 'EFECTIVO' ? 'Efectivo' : md.medio) : 'Sin asignar'; };
+const pagoTipoOld = r => S.cruce[r.cargo_id + '-' + r.folio] ? 'CHEQUE' : ((S.medio || {})[r.id] ? 'EFECTIVO' : 'SIN');
 const fFecha = f => f.split('-').reverse().join('/');
 
 /* ---------- Resumen ---------- */
@@ -356,7 +392,7 @@ function vFolios() {
   <div class="tw"><table><thead><tr>${S.unidad ? '' : '<th>Unidad</th>'}<th>Cargo</th><th class="n">Folio</th><th>Fecha</th><th>Concepto</th><th class="n">Monto</th>${soloFolios() ? '' : '<th class="n">Total a pagar</th><th>Pago</th>'}${soloFolios() ? '' : '<th>Archivo</th><th>Estado</th>'}${esAdmin() ? '<th></th>' : ''}</tr></thead><tbody>
   ${rows.map(r => { const ch = S.cruce[r.cargo_id + '-' + r.folio]; return `<tr data-d="${r.id}" style="cursor:pointer">${S.unidad ? '' : `<td>${nomU(r.unidad)}</td>`}<td>${CARGOS[r.cargo_id]}</td><td class="n folio">${r.folio}</td><td>${r.fecha.split('-').reverse().join('/')}</td><td class="wrap">${esc(r.concepto)}</td><td class="n">${money(r.monto)}</td>
   ${soloFolios() ? '' : `<td class="n">${money(r.total_pagar != null ? r.total_pagar : r.monto)}${r.sin_factura ? ` <span class="badge b-bad" title="Sin factura">+${Number(r.pct_extra)}%</span>` : ''}</td>
-  <td>${ch ? `<span class="badge b-ok">Cheque ${esc(ch)}</span>` : (S.medio || {})[r.id] ? `<span class="badge b-ok" title="${esc(S.medio[r.id].referencia || '')}">${S.medio[r.id].medio === 'EFECTIVO' ? 'Efectivo' : esc(S.medio[r.id].medio)}</span>` : '<span class="badge b-no">Sin asignar</span>'}</td>`}
+  <td>${S.fp && S.fp[r.id] ? pagoBadgeFp(S.fp[r.id], S.sug[r.id]) : ch ? `<span class="badge b-ok">Cheque ${esc(ch)}</span>` : (S.medio || {})[r.id] ? `<span class="badge b-ok" title="${esc(S.medio[r.id].referencia || '')}">${S.medio[r.id].medio === 'EFECTIVO' ? 'Efectivo' : esc(S.medio[r.id].medio)}</span>` : '<span class="badge b-no">Sin asignar</span>'}</td>`}
   ${soloFolios() ? '' : `<td>${archBadge(r)}</td><td>${estadoBadge(r)}</td>`}${esAdmin() ? `<td><a href="#" data-an="${r.id}" class="mut">Anular</a></td>` : ''}</tr>`; }).join('')}
   </tbody></table></div>`;
   ligaFiltros(vFolios);
@@ -428,6 +464,7 @@ function abreDetalle(id) {
   <div id="dmsg"></div>
   ${ed ? `${lim ? `<div class="msg info">Edición disponible hasta ${fHora(lim)}.</div>` : ''}<label>Fecha</label><input type="date" id="df" value="${r.fecha}"><label>Concepto</label><input id="dc" value="${esc(r.concepto)}"><label>Monto</label><input id="dm" type="number" step="0.01" min="0" inputmode="decimal" value="${r.monto}"><div style="margin-top:10px"><button class="btn" id="dg">Guardar cambios</button></div>`
         : `<div style="margin-top:10px">${fFecha(r.fecha)} · <b>${money(r.monto)}</b><br>${esc(r.concepto)}</div>${soloFolios() ? `<div class="msg info">${r.revisado_en ? 'El folio ya fue revisado y no admite cambios.' : r.creado_por !== S.perfil.id ? 'Solo se pueden editar los folios capturados con este usuario.' : 'Venció el plazo de 24 horas para editar este folio.'}</div>` : ''}`}
+  ${pagoDetalleHTML(r)}
   <h3 style="margin:16px 0 4px;font-size:15px">Archivos</h3>${archs}
   <div class="row" style="margin-top:8px">
     ${ed && esPl ? `<button class="btn sec" id="dga">Adjuntar folio (PDF o imagen)</button><input type="file" id="dfa" accept="application/pdf,image/*" style="display:none">` : ''}
@@ -443,6 +480,13 @@ function abreDetalle(id) {
   d.onclick = e => { if (e.target === d) cierraDetalle(); };
   $('#dx').onclick = cierraDetalle;
   d.querySelectorAll('[data-v]').forEach(b => b.onclick = () => verArchivo(b.dataset.v));
+  d.querySelectorAll('[data-vs]').forEach(b => b.onclick = () => { S.ac.semana = b.dataset.vs; S.ac.desde = ''; cierraDetalle(); S.tab = 'acumulado'; shell(); });
+  d.querySelectorAll('[data-cf]').forEach(b => b.onclick = async () => {
+    const sg = (S.sug[id] || [])[+b.dataset.cf]; if (!sg) return;
+    if (!confirm('Confirmar: ' + sg.referencia + ' (' + fFecha(sg.fecha_ref) + ') para el folio ' + r.folio + '?')) return;
+    const { error } = await sb.rpc('folio_confirmar_pago', { p_mov: id, p_medio: sg.tipo_sugerido, p_referencia: sg.referencia, p_fecha: sg.fecha_ref });
+    if (error) return msg(error.message); await refresca(); $('#dmsg').innerHTML = '<div class="msg ok">Pago confirmado.</div>';
+  });
   const refresca = async () => { await cargar(); const y = window.scrollY; const keep = S.det; shell(); window.scrollTo(0, y); S.det = keep; abreDetalle(keep); };
   const subir = async (tipo, file) => { try { msg('Cargando archivo…', 'info'); await subeArchivo(id, tipo, file); await refresca(); $('#dmsg').innerHTML = '<div class="msg ok">Archivo guardado.</div>'; } catch (e) { msg(e.message || String(e)); } };
   if ($('#dg')) $('#dg').onclick = async () => {
@@ -485,13 +529,13 @@ function vCancun() {
   <select id="cm"><option value="">Todo el año</option>${meses}</select><select id="cv"><option value="">Todas las villas</option>${villas.map(v => `<option ${C.villa === v ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>
   <input id="cq" placeholder="Buscar concepto, villa o folio…" value="${esc(C.q)}"></div>
   <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> registros · <b>${money(tot)}</b></div><button class="btn sec" id="cx">Descargar Excel</button></div>
-  <div class="tw"><table><thead><tr><th>Fecha</th><th>Folio</th><th>Cargo</th><th>Concepto</th><th>Categoría</th><th>Villa</th><th class="n">Monto</th></tr></thead><tbody>
-  ${rows.map(r => `<tr><td>${fFecha(r.fecha || '')}</td><td class="folio">${esc(r.folio || '')}</td><td>${esc(r.cargo || '')}</td><td class="wrap">${esc(r.concepto || '')}</td><td>${esc(r.categoria || '')}</td><td>${esc(r.villa || '')}</td><td class="n">${money(r.monto)}</td></tr>`).join('') || '<tr><td colspan="7" class="mut">Sin registros con los filtros seleccionados.</td></tr>'}
-  <tr class="tot"><td colspan="6">TOTAL</td><td class="n">${money(tot)}</td></tr></tbody></table></div>`;
+  <div class="tw"><table><thead><tr><th>Fecha</th><th>Folio</th><th>Cargo</th><th>Concepto</th><th>Categoría</th><th>Villa</th><th class="n">Monto</th><th>Pago y semana</th></tr></thead><tbody>
+  ${rows.map(r => `<tr><td>${fFecha(r.fecha || '')}</td><td class="folio">${esc(r.folio || '')}</td><td>${esc(r.cargo || '')}</td><td class="wrap">${esc(r.concepto || '')}</td><td>${esc(r.categoria || '')}</td><td>${esc(r.villa || '')}</td><td class="n">${money(r.monto)}</td><td>${S.fpc && S.fpc[r.id] ? pagoBadgeFp(S.fpc[r.id]) : ''}</td></tr>`).join('') || '<tr><td colspan="8" class="mut">Sin registros con los filtros seleccionados.</td></tr>'}
+  <tr class="tot"><td colspan="6">TOTAL</td><td class="n">${money(tot)}</td><td></td></tr></tbody></table></div>`;
   document.querySelectorAll('#cs button').forEach(b => b.onclick = () => { C.sub = b.dataset.s; vCancun(); });
   $('#ct').onchange = e => { C.tipo = e.target.value; vCancun(); }; $('#cm').onchange = e => { C.mes = e.target.value; vCancun(); }; $('#cv').onchange = e => { C.villa = e.target.value; vCancun(); };
   $('#cq').oninput = e => { C.q = e.target.value; clearTimeout(vCancun.t); vCancun.t = setTimeout(() => { vCancun(); const n = $('#cq'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); }, 250); };
-  $('#cx').onclick = () => { const f = rows.map(r => ({ FECHA: r.fecha, FOLIO: r.folio, CARGO: r.cargo, CONCEPTO: r.concepto, CATEGORIA: r.categoria, VILLA: r.villa, MONTO: Number(r.monto) })); f.push({ CONCEPTO: 'TOTAL', MONTO: tot }); bajarExcel('cancun_' + C.sub.toLowerCase() + '_' + hoyISO() + '.xlsx', f); };
+  $('#cx').onclick = () => { const f = rows.map(r => ({ FECHA: r.fecha, FOLIO: r.folio, CARGO: r.cargo, CONCEPTO: r.concepto, CATEGORIA: r.categoria, VILLA: r.villa, MONTO: Number(r.monto), PAGO: S.fpc && S.fpc[r.id] ? pagoTxtFp(S.fpc[r.id]) : '' })); f.push({ CONCEPTO: 'TOTAL', MONTO: tot }); bajarExcel('cancun_' + C.sub.toLowerCase() + '_' + hoyISO() + '.xlsx', f); };
 }
 
 /* ---------- Acumulado semanal ---------- */
