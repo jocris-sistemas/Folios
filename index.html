@@ -168,7 +168,7 @@ async function cargarExtra() {
   if (veCancun()) {
     let cn = []; from = 0;
     for (;;) {
-      const { data, error } = await sb.from('cancun_movimientos').select('id,fecha,cargo,folio,concepto,monto,pago,tipo,categoria,villa,comentarios,depto,pagado').order('fecha', { ascending: false }).range(from, from + 999);
+      const { data, error } = await sb.from('cancun_movimientos').select('id,fecha,cargo,folio,concepto,monto,pago,tipo,categoria,villa,comentarios,depto,pagado,cuenta_id').order('fecha', { ascending: false }).range(from, from + 999);
       if (error) break;
       cn = cn.concat(data); if (data.length < 1000) break; from += 1000;
     }
@@ -179,6 +179,8 @@ async function cargarExtra() {
       if (!a.error) S.srv = a.data || [];
       const b = await sb.from('cancun_villas_estado').select('*').eq('activa', false).order('villa');
       if (!b.error) S.villasBaja = b.data || [];
+      const cu = await sb.from('cancun_cuentas').select('id,beneficiario,banco,cuenta,nota').eq('activo', true);
+      if (!cu.error) S.cuentasCn = cu.data || [];
     } catch (e) { }
   }
 }
@@ -232,18 +234,19 @@ async function boot() {
 /* ---------- estructura ---------- */
 function shell() {
   const tabs = soloFolios() ? [['folios', 'Mis folios'], ['capturar', 'Capturar'], ...(puedeImpPl() ? [['importar', 'Importar Excel']] : [])] : [['folios', 'Folios'], ['ingresos', 'Ingresos']];
+  if (veCancun()) tabs.push(['cancun', 'Cancún']);
   if (veAcumulado()) tabs.push(['acumulado', 'Acumulado semanal']);
   if (puedeCapturar() && !soloFolios()) tabs.push(['capturar', 'Capturar'], ['importar', 'Importar Excel']);
   $('#app').innerHTML = `<header><div class="top"><h1>Folios<small>${soloFolios() ? 'Platón' : 'egresos e ingresos'}</small></h1>
     <div class="who">${esc(S.perfil.nombre || S.perfil.correo || '')}<br><a href="#" id="out" style="color:#fff">Cerrar sesión</a></div></div>
     <nav>${tabs.map(t => `<button data-t="${t[0]}" class="${S.tab === t[0] ? 'on' : ''}">${t[1]}</button>`).join('')}</nav></header>${bannerSrv()}<main id="m"></main>`;
   document.querySelectorAll('nav button').forEach(b => b.onclick = () => { S.tab = b.dataset.t; shell(); });
-  { const bs = $('#bsrv'); if (bs) bs.onclick = () => { S.tab = 'folios'; S.unidad = 'JOCRIS'; S.cargo = -1; shell(); }; }
+  { const bs = $('#bsrv'); if (bs) bs.onclick = () => { S.tab = 'cancun'; shell(); }; }
   $('#out').onclick = async e => { e.preventDefault(); await sb.auth.signOut(); location.reload(); };
   if (S.tab === 'resumen') S.tab = 'folios';
   { const us = unidades(); if (!us.includes(S.unidad)) { S.unidad = us.includes('PLATON') ? 'PLATON' : (us[0] || ''); S.cargo = 0; } }
   if (soloFolios() && !['folios', 'capturar', ...(puedeImpPl() ? ['importar'] : [])].includes(S.tab)) S.tab = 'folios';
-  if (S.tab === 'cancun') S.tab = 'folios';
+  if (S.tab === 'cancun' && !veCancun()) S.tab = 'folios';
   if (S.tab === 'acumulado' && !veAcumulado()) S.tab = 'folios';
   ({ resumen: vResumen, folios: vFolios, ingresos: vIngresos, concil: vConcil, capturar: vCapturar, importar: vImportar, cancun: vCancun, acumulado: vAcumulado })[S.tab]();
   if (S.det) abreDetalle(S.det);
@@ -253,7 +256,7 @@ function filtrosHTML(conBuscar, sinTodos, opc) {
   opc = opc || {};
   const meses = MESES.map((m, i) => `<option value="${String(i + 1).padStart(2, '0')}" ${S.mes === String(i + 1).padStart(2, '0') ? 'selected' : ''}>${m}</option>`).join('');
   const us = unidades(); if (!us.includes(S.unidad)) { S.unidad = us.includes('PLATON') ? 'PLATON' : (us[0] || ''); S.cargo = 0; }
-  const conCan = S.unidad === 'JOCRIS' && veCancun() && !opc.sinCancun;
+  const conCan = false;
   if (S.cargo && !(S.cargo === -1 && conCan) && !cargosDe().includes(S.cargo)) S.cargo = 0;
   const opsC = [...(sinTodos ? [] : [[0, 'Todos los cargos']]), ...cargosDe().map(c => [c, CARGOS[c]]), ...(conCan ? [[-1, 'CANCÚN']] : [])];
   return `<div class="tb">${us.length > 1 && !opc.sinUnidades ? `<div class="chips">${us.map(u => [u, nomU(u)]).map(u => `<button class="chip ${S.unidad === u[0] ? 'on' : ''}" data-u="${u[0]}">${u[1]}</button>`).join('')}</div>` : ''}
@@ -548,8 +551,50 @@ function panelServicios() {
   ${[...sv].filter(x => x.estado !== 'BAJA').sort((a, b) => (ord[a.estado] - ord[b.estado]) || String(a.limite).localeCompare(String(b.limite))).map(x => `<tr><td>${esc(x.villa)}${x.nota ? ' <span class="mut">· ' + esc(x.nota) + '</span>' : ''}</td><td>${esc(x.servicio || '')}</td><td>${esc(x.no_servicio || '')}</td><td>${bd(x)}</td><td>${lim(x)}</td><td class="n">${x.importe_recibo != null ? money(x.importe_recibo) : (x.importe_variable ? 'Por confirmar' : '—')}</td><td>${x.ultimo_pago ? fFecha(x.ultimo_pago) : ''}</td></tr>`).join('')}</tbody></table></div>
   ${(S.villasBaja || []).length ? `<div class="mut" style="margin-top:8px">Sin pagos futuros: ${S.villasBaja.map(v => esc(v.villa) + ' (último pago ' + fFecha(v.ultimo_pago) + ')').join(' · ')}.</div>` : ''}</div>`;
 }
+
+/* ---------- Folio PDF de Cancún (formato A4) ---------- */
+const LOGO_CN = 'data:image/jpeg;base64,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';
+const MESES_LC = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+const fechaLarga = iso => { const p = String(iso || '').slice(0, 10).split('-'); return p.length === 3 ? +p[2] + ' de ' + MESES_LC[+p[1] - 1] + ' de ' + p[0] : ''; };
+const fmtCuenta = c => { const d = String(c || '').replace(/\s+/g, ''); return /^\d+$/.test(d) ? d.replace(/(\d{4})(?=\d)/g, '$1-') : String(c || ''); };
+const normN = t => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+const cuentaDe = r => { if (r.cuenta_id) { const k = (S.cuentasCn || []).find(c => c.id === r.cuenta_id); if (k) return k; } const n = normN(r.concepto); if (!n) return null; return (S.cuentasCn || []).find(c => { const b = normN(c.beneficiario); return b === n || b.includes(n) || n.includes(b); }) || null; };
+function imprimeFoliosCancun(lista) {
+  lista = (lista || []).filter(Boolean).sort((a, b) => String(a.folio).localeCompare(String(b.folio), 'es', { numeric: true }));
+  if (!lista.length) return;
+  if (!window.jspdf) return alert('No fue posible cargar el generador de PDF. Verificar la conexión a internet.');
+  const d = new window.jspdf.jsPDF({ unit: 'pt', format: 'a4' });
+  const NAVY = [31, 58, 95], GOLD = [201, 162, 39], M = 38, W = 595.28, R = W - M;
+  lista.forEach((r, i) => {
+    if (i) d.addPage();
+    try { d.addImage(LOGO_CN, 'JPEG', M, 32, 124, 32); } catch (e) { }
+    d.setFont('helvetica', 'bold'); d.setFontSize(13); d.setTextColor(...NAVY); d.text('FOLIO ' + r.folio, R, 48, { align: 'right' });
+    d.setFont('helvetica', 'normal'); d.setFontSize(8); d.setTextColor(120); d.text(fechaLarga(r.fecha), R, 63, { align: 'right' });
+    d.setFillColor(...GOLD); d.rect(M, 76, R - M, 3.5, 'F');
+    d.setFont('helvetica', 'bold'); d.setFontSize(10); d.setTextColor(20); d.text(String(r.concepto || '').toUpperCase(), W / 2, 100, { align: 'center' });
+    d.setFillColor(...NAVY); d.rect(M, 122, R - M, 20, 'F'); d.setTextColor(255); d.setFontSize(8);
+    const X = [M + 6, M + 62, M + 154, M + 302, M + 372];
+    ['FOLIO', 'VILLA', 'BENEFICIARIO', 'VENCE', 'REFERENCIA'].forEach((t, k) => d.text(t, X[k], 135));
+    d.text('MONTO', R - 6, 135, { align: 'right' });
+    d.setFont('helvetica', 'normal'); d.setTextColor(30);
+    const villa = d.splitTextToSize(String(r.villa || ''), 84), ben = d.splitTextToSize(String(r.concepto || '').toUpperCase(), 140), ref = d.splitTextToSize(String(r.categoria || ''), 80);
+    const n = Math.max(villa.length, ben.length, ref.length, 1);
+    d.text(String(r.folio || ''), X[0], 158); d.text(villa, X[1], 158); d.text(ben, X[2], 158); d.text('—', X[3], 158); d.text(ref, X[4], 158);
+    d.setFont('helvetica', 'bold'); d.text(money(r.monto), R - 6, 158, { align: 'right' });
+    let y = 158 + n * 11 + 6; d.setDrawColor(215); d.line(M, y, R, y);
+    y += 18; d.setDrawColor(...NAVY); d.setLineWidth(0.8); d.line(M, y - 8, R, y - 8);
+    d.setFontSize(9); d.setTextColor(...NAVY); d.text('TOTAL', M + 340, y + 6); d.setTextColor(20); d.text(money(r.monto), R - 6, y + 6, { align: 'right' });
+    y += 34; d.setTextColor(...NAVY); d.setFontSize(10); d.text('DATOS BANCARIOS', M, y);
+    const c = cuentaDe(r); d.setTextColor(0); d.setFontSize(11);
+    if (c) { d.text(String(c.banco || '') + ' ' + fmtCuenta(c.cuenta), M, y + 17); if (c.nota) { d.setFont('helvetica', 'normal'); d.setFontSize(8); d.text(String(c.nota), M, y + 30); } }
+    else { d.setFont('helvetica', 'normal'); d.setFontSize(9); d.setTextColor(150); d.text(r.pago === 'EFECTIVO' ? 'Pago en efectivo.' : 'Sin cuenta registrada para este beneficiario.', M, y + 16); }
+    y += 62; d.setFont('helvetica', 'bold'); d.setFontSize(7.5); d.setTextColor(20); d.text('SOLICITÓ: PEDRO CARRANZA YEPEZ', M, y);
+    d.setFont('helvetica', 'normal'); d.setTextColor(120); d.text('AUTORIZÓ: ING. JOSE CRISTOBAL GARCIA PERALES', R, y, { align: 'right' });
+  });
+  d.save('folios_cancun_' + (lista.length === 1 ? lista[0].folio : lista[0].folio + '_' + lista[lista.length - 1].folio) + '.pdf');
+}
 function vCancun() {
-  const C = S.cn, base = S.cancun;
+  const C = S.cn, base = S.cancun; S.cnSel = S.cnSel || {};
   const subs = [['EFECTIVO', 'Efectivo'], ['CHEQUE', 'Cheques'], ['SPEI', 'Transferencias']].filter(x => x[0] !== 'SPEI' || base.some(r => r.pago === 'SPEI'));
   const villas = [...new Set(base.map(r => r.villa).filter(Boolean))].sort();
   const meses = MESES.map((m, i) => `<option value="${String(i + 1).padStart(2, '0')}" ${C.mes === String(i + 1).padStart(2, '0') ? 'selected' : ''}>${m}</option>`).join('');
@@ -557,19 +602,111 @@ function vCancun() {
     (!C.q || [r.concepto, r.categoria, r.villa, r.folio, r.cargo].join(' ').toLowerCase().includes(C.q.toLowerCase())));
   const tot = rows.reduce((t, r) => t + (r.pagado === false ? 0 : Number(r.monto || 0)), 0);
   const pendT = rows.reduce((t, r) => t + (r.pagado === false ? Number(r.monto || 0) : 0), 0);
-  $('#m').innerHTML = `${filtrosHTML(false, true, { soloChips: true })}${panelServicios()}<div class="row" style="margin-bottom:10px"><div class="seg" id="cs">${subs.map(x => `<button data-s="${x[0]}" class="${C.sub === x[0] ? 'on' : ''}">${x[1]} (${base.filter(r => r.pago === x[0] && (!C.tipo || r.tipo === C.tipo)).length})</button>`).join('')}</div></div>
+  $('#m').innerHTML = `${panelServicios()}<div class="row" style="margin-bottom:10px"><div class="seg" id="cs">${subs.map(x => `<button data-s="${x[0]}" class="${C.sub === x[0] ? 'on' : ''}">${x[1]} (${base.filter(r => r.pago === x[0] && (!C.tipo || r.tipo === C.tipo)).length})</button>`).join('')}</div></div>
   <div class="sticky-f"><select id="ct"><option value="EGRESO" ${C.tipo === 'EGRESO' ? 'selected' : ''}>Egresos</option><option value="INGRESO" ${C.tipo === 'INGRESO' ? 'selected' : ''}>Ingresos</option><option value="PRESTAMO" ${C.tipo === 'PRESTAMO' ? 'selected' : ''}>Préstamos</option><option value="" ${!C.tipo ? 'selected' : ''}>Todos los tipos</option></select>
   <select id="cm"><option value="">Todo el año</option>${meses}</select><select id="cv"><option value="">Todas las villas</option>${villas.map(v => `<option ${C.villa === v ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>
   <input id="cq" placeholder="Buscar concepto, villa o folio…" value="${esc(C.q)}"></div>
-  <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> registros · <b>${money(tot)}</b>${pendT ? ` <span class="mut">(sin incluir ${money(pendT)} pendiente de pago)</span>` : ''}</div><button class="btn sec" id="cx">Descargar Excel</button></div>
-  <div class="tw"><table><thead><tr><th>Fecha</th><th>Folio</th><th>Cargo</th><th>Concepto</th><th>Categoría</th><th>Villa</th><th class="n">Monto</th><th>Pago y semana</th></tr></thead><tbody>
-  ${rows.map(r => `<tr><td>${fFecha(r.fecha || '')}</td><td class="folio">${esc(r.folio || '')}</td><td>${esc(r.cargo || '')}</td><td class="wrap">${esc(r.concepto || '')}</td><td>${esc(r.categoria || '')}</td><td>${esc(r.villa || '')}</td><td class="n">${money(r.monto)}</td><td>${r.pagado === false ? '<span class="badge b-bad">Pendiente de pago</span>' : (S.fpc && S.fpc[r.id] ? pagoBadgeFp(S.fpc[r.id]) : '')}</td></tr>`).join('') || '<tr><td colspan="8" class="mut">Sin registros con los filtros seleccionados.</td></tr>'}
-  <tr class="tot"><td colspan="6">TOTAL</td><td class="n">${money(tot)}</td><td></td></tr></tbody></table></div>`;
-  ligaFiltros(vFolios);
+  <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> registros · <b>${money(tot)}</b>${pendT ? ` <span class="mut">(sin incluir ${money(pendT)} pendiente de pago)</span>` : ''}</div><div class="row"><button class="btn gold" id="cnew">Nuevo folio</button><button class="btn sec" id="cpi">Imprimir seleccionados (0)</button><button class="btn sec" id="cx">Descargar Excel</button></div></div>
+  <div class="tw"><table><thead><tr><th><input type="checkbox" id="cka" title="Seleccionar todos"></th><th>Fecha</th><th>Folio</th><th>Cargo</th><th>Concepto</th><th>Categoría</th><th>Villa</th><th class="n">Monto</th><th>Pago y semana</th><th></th></tr></thead><tbody>
+  ${rows.map(r => `<tr><td>${r.tipo === 'EGRESO' ? `<input type="checkbox" class="ckf" data-i="${esc(r.id)}" ${S.cnSel[r.id] ? 'checked' : ''}>` : ''}</td><td>${fFecha(r.fecha || '')}</td><td class="folio">${esc(r.folio || '')}</td><td>${esc(r.cargo || '')}</td><td class="wrap">${esc(r.concepto || '')}</td><td>${esc(r.categoria || '')}</td><td>${esc(r.villa || '')}</td><td class="n">${money(r.monto)}</td><td>${r.pagado === false ? '<span class="badge b-bad">Pendiente de pago</span>' : (S.fpc && S.fpc[r.id] ? pagoBadgeFp(S.fpc[r.id]) : '')}</td><td>${r.tipo === 'EGRESO' ? `<button class="btn sec pim" data-i="${esc(r.id)}">Imprimir</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="10" class="mut">Sin registros con los filtros seleccionados.</td></tr>'}
+  <tr class="tot"><td colspan="7">TOTAL</td><td class="n">${money(tot)}</td><td></td><td></td></tr></tbody></table></div>`;
   document.querySelectorAll('#cs button').forEach(b => b.onclick = () => { C.sub = b.dataset.s; vCancun(); });
+  const selN = () => { const n = rows.filter(r => S.cnSel[r.id]).length; $('#cpi').textContent = 'Imprimir seleccionados (' + n + ')'; };
+  document.querySelectorAll('.ckf').forEach(c => c.onchange = () => { S.cnSel[c.dataset.i] = c.checked; selN(); });
+  $('#cka').onchange = e => { rows.filter(r => r.tipo === 'EGRESO').forEach(r => S.cnSel[r.id] = e.target.checked); document.querySelectorAll('.ckf').forEach(c => c.checked = e.target.checked); selN(); };
+  document.querySelectorAll('.pim').forEach(b => b.onclick = () => imprimeFoliosCancun([S.cancun.find(x => x.id === b.dataset.i)]));
+  $('#cpi').onclick = () => { const l = rows.filter(r => S.cnSel[r.id]); if (!l.length) return alert('Se requiere seleccionar al menos un folio.'); imprimeFoliosCancun(l); };
+  selN(); $('#cnew').onclick = abreCapturaCancun;
   $('#ct').onchange = e => { C.tipo = e.target.value; vCancun(); }; $('#cm').onchange = e => { C.mes = e.target.value; vCancun(); }; $('#cv').onchange = e => { C.villa = e.target.value; vCancun(); };
   $('#cq').oninput = e => { C.q = e.target.value; clearTimeout(vCancun.t); vCancun.t = setTimeout(() => { vCancun(); const n = $('#cq'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); }, 250); };
   $('#cx').onclick = () => { const f = rows.map(r => ({ FECHA: r.fecha, FOLIO: r.folio, CARGO: r.cargo, CONCEPTO: r.concepto, CATEGORIA: r.categoria, VILLA: r.villa, MONTO: Number(r.monto), PAGO: r.pagado === false ? 'Pendiente de pago' : (S.fpc && S.fpc[r.id] ? pagoTxtFp(S.fpc[r.id]) : '') })); f.push({ CONCEPTO: 'TOTAL', MONTO: tot }); bajarExcel('cancun_' + C.sub.toLowerCase() + '_' + hoyISO() + '.xlsx', f); };
+}
+
+/* ---------- Captura de folios de Cancún ---------- */
+async function recargaCuentasCn() { const cu = await sb.from('cancun_cuentas').select('id,beneficiario,banco,cuenta,nota').eq('activo', true); if (!cu.error) S.cuentasCn = cu.data || []; }
+async function abreCapturaCancun() {
+  const bajas = new Set((S.villasBaja || []).map(v => v.villa));
+  const todas = [...new Set((S.cancun || []).map(r => r.villa).filter(Boolean))].filter(v => !bajas.has(v)).sort();
+  const propias = todas.filter(v => !['CANCUN', 'GENERAL', 'VARIAS / COMPARTIDO'].includes(v));
+  const cats = [...new Set((S.cancun || []).filter(r => r.tipo === 'EGRESO' && r.categoria).map(r => r.categoria))].sort();
+  const bens = [...new Set([...(S.cancun || []).filter(r => r.tipo === 'EGRESO').map(r => r.concepto), ...(S.cuentasCn || []).map(c => c.beneficiario)].filter(Boolean))].sort();
+  const hoy = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  const st = { rep: {}, nueva: false };
+  let prox = '…'; try { const r = await sb.rpc('cancun_siguiente_folio'); if (!r.error) prox = r.data; } catch (e) { }
+  const w = document.createElement('div'); w.id = 'cnmodal';
+  w.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;overflow:auto;padding:20px 12px';
+  w.innerHTML = `<div class="card" style="max-width:720px;margin:0 auto">
+  <div class="row" style="justify-content:space-between"><b style="font-size:16px">Nuevo folio de Cancún</b><button class="btn ghost" id="nx">Cerrar</button></div>
+  <div class="msg info">Folio que se asignará: <b class="folio" style="font-size:20px">${esc(prox)}</b></div>
+  <label>Fecha</label><input type="date" id="nf" value="${hoy}">
+  <label>Beneficiario</label><input id="nb" list="nbl" autocomplete="off" placeholder="Nombre del beneficiario"><datalist id="nbl">${bens.map(b => `<option value="${esc(b)}">`).join('')}</datalist>
+  <label>Categoría</label><select id="nc"><option value="">Seleccionar…</option>${cats.map(c => `<option>${esc(c)}</option>`).join('')}</select>
+  <label>Forma de pago</label><div class="seg" id="np">${['SPEI', 'EFECTIVO', 'CHEQUE'].map((p, i) => `<button data-p="${p}" class="${i === 0 ? 'on' : ''}">${p === 'SPEI' ? 'Transferencia' : p === 'EFECTIVO' ? 'Efectivo' : 'Cheque'}</button>`).join('')}</div>
+  <div id="ncta"></div>
+  <label>Monto</label><input id="nm" type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00">
+  <label>Villa</label><select id="nv"><option value="">Seleccionar…</option>${propias.map(v => `<option>${esc(v)}</option>`).join('')}<option>VARIAS / COMPARTIDO</option>${todas.filter(v => ['CANCUN', 'GENERAL'].includes(v)).map(v => `<option>${esc(v)}</option>`).join('')}</select>
+  <div id="nrep"></div>
+  <label>Comentarios (opcional)</label><input id="nco" autocomplete="off">
+  <div style="margin-top:14px"><button class="btn gold" id="ngo" style="width:100%">Guardar folio</button></div><div id="nres"></div></div>`;
+  document.body.appendChild(w);
+  const q = s => w.querySelector(s); let pago = 'SPEI', ctaSel = '';
+  q('#nx').onclick = () => w.remove();
+  const ctas = () => { const n = normN(q('#nb').value); const l = (S.cuentasCn || []); const coinc = n ? l.filter(c => { const b = normN(c.beneficiario); return b === n || b.includes(n) || n.includes(b); }) : []; return { coinc, l }; };
+  const pintaCta = () => {
+    const box = q('#ncta'); if (pago !== 'SPEI') { box.innerHTML = ''; return; }
+    const { coinc, l } = ctas(); const lista = coinc.length ? coinc : l;
+    if (!ctaSel && coinc.length === 1) ctaSel = String(coinc[0].id);
+    box.innerHTML = `<label>Cuenta de depósito${coinc.length ? '' : ' <span class="mut">(sin cuentas registradas para este beneficiario)</span>'}</label>
+    <select id="ncs"><option value="">Seleccionar…</option>${lista.map(c => `<option value="${c.id}" ${String(c.id) === ctaSel ? 'selected' : ''}>${esc(c.beneficiario)} · ${esc(c.banco)} · ${esc(fmtCuenta(c.cuenta))}${c.nota ? ' · ' + esc(c.nota) : ''}</option>`).join('')}<option value="NEW" ${ctaSel === 'NEW' ? 'selected' : ''}>+ Agregar cuenta nueva</option></select>
+    ${ctaSel === 'NEW' ? `<div class="card" style="margin-top:8px"><label>Banco</label><input id="nnb" autocomplete="off" placeholder="BBVA, BANORTE…"><label>Cuenta, CLABE o tarjeta</label><input id="nnc" inputmode="numeric" autocomplete="off"><label>Nota (opcional)</label><input id="nnn" autocomplete="off" placeholder="Ej. A nombre de otra persona"></div>` : ''}`;
+    q('#ncs').onchange = e => { ctaSel = e.target.value; pintaCta(); };
+  };
+  q('#nb').oninput = () => { ctaSel = ''; pintaCta(); };
+  q('#np').querySelectorAll('button').forEach(b => b.onclick = () => { pago = b.dataset.p; q('#np').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); pintaCta(); });
+  const monto = () => parseFloat(q('#nm').value) || 0;
+  const reparte = () => {
+    const sel = propias.filter(v => st.rep[v] && st.rep[v].on); const m = monto();
+    if (sel.length && m > 0) { const base = Math.floor(m / sel.length * 100) / 100; let acum = 0; sel.forEach((v, i) => { if (!st.rep[v].man) { st.rep[v].m = i === sel.length - 1 ? +(m - acum).toFixed(2) : base; } acum += Number(st.rep[v].m || 0); }); }
+  };
+  const sumaRep = () => propias.reduce((t, v) => t + (st.rep[v] && st.rep[v].on ? Number(st.rep[v].m || 0) : 0), 0);
+  const pintaRep = () => {
+    const box = q('#nrep'); if (q('#nv').value !== 'VARIAS / COMPARTIDO') { box.innerHTML = ''; return; }
+    box.innerHTML = `<label>Reparto entre villas <span class="mut">(partes iguales; los importes pueden modificarse)</span></label><div class="tw"><table><tbody>${propias.map(v => { const r = st.rep[v] || {}; return `<tr><td><input type="checkbox" class="rk" data-v="${esc(v)}" ${r.on ? 'checked' : ''}></td><td>${esc(v)}</td><td class="n"><input class="rm" data-v="${esc(v)}" type="number" step="0.01" min="0" style="width:120px" value="${r.on ? (r.m ?? '') : ''}" ${r.on ? '' : 'disabled'}></td></tr>`; }).join('')}</tbody></table></div><div id="nsum" class="mut"></div>`;
+    box.querySelectorAll('.rk').forEach(c => c.onchange = () => { const v = c.dataset.v; st.rep[v] = st.rep[v] || {}; st.rep[v].on = c.checked; Object.values(st.rep).forEach(r => r.man = false); reparte(); pintaRep(); });
+    box.querySelectorAll('.rm').forEach(c => c.oninput = () => { const v = c.dataset.v; st.rep[v].m = parseFloat(c.value) || 0; st.rep[v].man = true; resumen(); });
+    resumen();
+  };
+  const resumen = () => { const e = q('#nsum'); if (!e) return; const s = sumaRep(), m = monto(), d = +(m - s).toFixed(2); e.innerHTML = `Suma del reparto: <b>${money(s)}</b> de <b>${money(m)}</b>${Math.abs(d) > 0.01 ? ` · <span style="color:#b00">diferencia ${money(d)}</span>` : ' · <span style="color:#080">cuadrado</span>'}`; };
+  q('#nv').onchange = pintaRep;
+  q('#nm').oninput = () => { Object.values(st.rep).forEach(r => r.man = false); reparte(); if (q('#nv').value === 'VARIAS / COMPARTIDO') pintaRep(); };
+  pintaCta();
+  q('#ngo').onclick = async () => {
+    const res = q('#nres'), err = t => res.innerHTML = `<div class="msg err">${esc(t)}</div>`;
+    const ben = q('#nb').value.trim(), cat = q('#nc').value, villa = q('#nv').value, fecha = q('#nf').value, m = monto();
+    if (!fecha || !ben || !cat || !villa || !(m > 0)) return err('Se requiere fecha, beneficiario, categoría, villa y monto.');
+    let reparto = [];
+    if (villa === 'VARIAS / COMPARTIDO') {
+      reparto = propias.filter(v => st.rep[v] && st.rep[v].on).map(v => ({ villa: v, monto: Number(st.rep[v].m || 0) }));
+      if (reparto.length < 2) return err('El reparto requiere al menos dos villas.');
+      if (Math.abs(sumaRep() - m) > 0.01) return err('La suma del reparto debe coincidir con el monto.');
+    }
+    const b = q('#ngo'); b.disabled = true;
+    let cuentaId = null;
+    if (pago === 'SPEI') {
+      if (!ctaSel) { b.disabled = false; return err('Se requiere seleccionar la cuenta de depósito.'); }
+      if (ctaSel === 'NEW') {
+        const r = await sb.rpc('cancun_cuenta_guardar', { p_beneficiario: ben, p_banco: q('#nnb').value, p_cuenta: q('#nnc').value, p_nota: q('#nnn').value });
+        if (r.error) { b.disabled = false; return err(r.error.message); }
+        cuentaId = r.data.id;
+      } else cuentaId = +ctaSel;
+    }
+    const { data, error } = await sb.rpc('cancun_folio_capturar', { p: { fecha, concepto: ben, categoria: cat, pago, monto: m, villa, comentarios: q('#nco').value, cuenta_id: cuentaId, reparto } });
+    b.disabled = false; if (error) return err(error.message);
+    await Promise.all([cargar(), recargaCuentasCn()]);
+    w.remove(); vCancun();
+    const nuevo = (S.cancun || []).find(r => r.id === data.id);
+    if (nuevo && confirm('Folio ' + data.folio + ' guardado. ¿Imprimir el PDF ahora?')) imprimeFoliosCancun([nuevo]);
+  };
 }
 
 /* ---------- Acumulado semanal ---------- */
