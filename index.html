@@ -233,7 +233,7 @@ async function boot() {
 
 /* ---------- estructura ---------- */
 function shell() {
-  const tabs = soloFolios() ? [['folios', 'Mis folios'], ['capturar', 'Capturar'], ...(puedeImpPl() ? [['importar', 'Importar Excel']] : [])] : [['folios', 'Folios'], ['ingresos', 'Ingresos']];
+  const tabs = soloFolios() ? [['folios', 'Mis folios'], ['capturar', 'Capturar'], ...(puedeImpPl() ? [['importar', 'Importar Excel'], ['concil', 'Pagos']] : [])] : [['folios', 'Folios'], ['ingresos', 'Ingresos'], ['concil', 'Pagos']];
   if (veCancun()) tabs.push(['cancun', 'Cancún']);
   if (veAcumulado()) tabs.push(['acumulado', 'Acumulado semanal']);
   if (puedeCapturar() && !soloFolios()) tabs.push(['capturar', 'Capturar'], ['importar', 'Importar Excel']);
@@ -245,7 +245,7 @@ function shell() {
   $('#out').onclick = async e => { e.preventDefault(); await sb.auth.signOut(); location.reload(); };
   if (S.tab === 'resumen') S.tab = 'folios';
   { const us = unidades(); if (!us.includes(S.unidad)) { S.unidad = us.includes('PLATON') ? 'PLATON' : (us[0] || ''); S.cargo = 0; } }
-  if (soloFolios() && !['folios', 'capturar', ...(puedeImpPl() ? ['importar'] : [])].includes(S.tab)) S.tab = 'folios';
+  if (soloFolios() && !['folios', 'capturar', ...(puedeImpPl() ? ['importar', 'concil'] : [])].includes(S.tab)) S.tab = 'folios';
   if (S.tab === 'cancun' && !veCancun()) S.tab = 'folios';
   if (S.tab === 'acumulado' && !veAcumulado()) S.tab = 'folios';
   ({ resumen: vResumen, folios: vFolios, ingresos: vIngresos, concil: vConcil, capturar: vCapturar, importar: vImportar, cancun: vCancun, acumulado: vAcumulado })[S.tab]();
@@ -1268,7 +1268,7 @@ async function vConcil() {
   }
   const banco = !!P.dep, vistas = [['resumen', 'Resumen mensual'], ['facturas', 'Facturas']];
   if (banco) vistas.push(['depositos', 'Depósitos del banco']);
-  if (puedeCapturar()) vistas.push(['subir', 'Subir archivo PAGOS']);
+  if (puedeCapturar() || puedeImpPl()) vistas.push(['subir', 'Subir archivo PAGOS']);
   if (!vistas.some(v => v[0] === P.vista)) P.vista = 'resumen';
   const lig = ligadoPor(), nPend = P.pagos.filter(p => !p.deposito_id).length;
   const filtroC = `<div class="chips" style="margin-bottom:10px">${[[0, 'Todos'], ...ingIds().map(c => [c, CARGOS[c]])].map(c => `<button class="chip ${P.cargo === c[0] ? 'on' : ''}" data-pc="${c[0]}">${c[1]}</button>`).join('')}</div>`;
