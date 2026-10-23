@@ -104,6 +104,7 @@ const limpia = n => String(n || '').replace(/^ING\.\s*/i, '').trim().toUpperCase
 const S = { arch: {}, acum: [], cancun: [], cn: { sub: 'EFECTIVO', tipo: 'EGRESO', mes: '', q: '', villa: '' }, ac: { semana: '', cargo: 0, q: '', desde: '', sel: {} }, det: null, unidad: '', perfil: null, rows: [], cruce: {}, tab: 'folios', cargo: 0, mes: '', q: '', anio: 2026, imp: null };
 const puedeCapturar = () => S.perfil && ['administrador', 'capturista'].includes(S.perfil.rol);
 const esAdmin = () => S.perfil && S.perfil.rol === 'administrador';
+const puedeLigar = () => !!(S.perfil && !S.perfil.solo_folios && ['administrador', 'capturista'].includes(S.perfil.rol));
 const puedeEdFol = () => !!(S.perfil && S.perfil.puede_editar_folios);
 const puedeImpPl = () => !!(S.perfil && S.perfil.solo_folios && S.perfil.puede_importar_platon);
 const soloFolios = () => !!(S.perfil && S.perfil.solo_folios);
@@ -112,13 +113,13 @@ const veAcumulado = () => false;
 
 /* ---------- datos ---------- */
 async function cargar() {
-  const { data: cg } = await sb.from('cargos').select('id,nombre,activo,solo_caja').order('id');
-  (cg || []).filter(c => c.activo && !c.solo_caja).forEach(c => { CARGOS[c.id] = limpia(c.nombre); CARGO_ID[limpia(c.nombre)] = c.id; });
   try { const { data: cu } = await sb.from('cargos_unidad').select('cargo_id,unidad'); S.cu = {}; (cu || []).forEach(x => S.cu[x.cargo_id] = x.unidad); } catch (e) { S.cu = {}; }
+  const { data: cg } = await sb.from('cargos').select('id,nombre,activo,solo_caja').order('id');
+  (cg || []).filter(c => c.activo && (!c.solo_caja || (S.cu || {})[c.id])).forEach(c => { CARGOS[c.id] = limpia(c.nombre); CARGO_ID[limpia(c.nombre)] = c.id; });
   S.chq = []; if (!soloFolios()) { try { const { data: ch } = await sb.from('chequeras').select('id,nombre,activa').eq('activa', true).order('nombre'); S.chq = ch || []; } catch (e) { } }
   let all = [], from = 0;
   for (;;) {
-    const { data, error } = await sb.from('platon_movimientos').select('id,unidad,cargo_id,tipo,folio,fecha,concepto,categoria,monto,origen,lote,nota,sin_factura,pct_extra,total_pagar,revisado_en,creado_por,creado_en,medio_pago,vencimiento,nombre,datos_bancarios,periodo,chequera_id,numero_cheque,hoja_id,datos_completos').eq('activo', true).order('fecha').order('id').range(from, from + 999);
+    const { data, error } = await sb.from('platon_movimientos').select('id,unidad,cargo_id,tipo,folio,fecha,concepto,categoria,monto,origen,lote,nota,sin_factura,pct_extra,total_pagar,revisado_en,creado_por,creado_en,medio_pago,vencimiento,nombre,datos_bancarios,periodo,chequera_id,numero_cheque,hoja_id,datos_completos,grupo_id').eq('activo', true).order('fecha').order('id').range(from, from + 999);
     if (error) throw error;
     all = all.concat(data); if (data.length < 1000) break; from += 1000;
   }
@@ -408,38 +409,55 @@ function vResumen() {
 }
 
 /* ---------- Folios ---------- */
+const miembrosGrupo = g => S.rows.filter(r => r.grupo_id === g && r.tipo === 'EGRESO').sort((a, b) => a.cargo_id - b.cargo_id || a.folio - b.folio);
+function resumenGrupo(g) {
+  const m = miembrosGrupo(g), tot = m.reduce((s, r) => s + Number(r.monto), 0) || 1;
+  return `<div class="msg info" style="margin-bottom:8px"><b>Grupo ${g}</b> · ${m.length} folios ligados · Total <b>${money(m.reduce((s, r) => s + Number(r.monto), 0))}</b><br>${m.map(r => `${esc(CARGOS[r.cargo_id] || '')} folio ${r.folio}: ${money(r.monto)} (${(Number(r.monto) * 100 / tot).toFixed(1)}%)`).join(' · ')} <a href="#" id="gq">Quitar filtro de grupo</a></div>`;
+}
 function vFolios() {
   fijaCargo();
   if (S.cargo === -1) return vCancun();
   const FF = S.ff = S.ff || { p: '', c: '', d: '', h: '' };
-  const todas = filtradas('EGRESO').sort((a, b) => a.cargo_id - b.cargo_id || a.folio - b.folio);
+  const todas = (FF.g ? miembrosGrupo(FF.g) : filtradas('EGRESO')).sort((a, b) => a.cargo_id - b.cargo_id || a.folio - b.folio);
   const cats = [...new Set(todas.map(r => r.categoria || 'SIN CATEGORÍA'))].sort();
-  const rows = todas.filter(r => (!FF.p || pagoTipo(r) === FF.p) && (!FF.r || (FF.r === 'P' ? (!r.revisado_en && r.unidad === 'PLATON' && !esPasado(r)) : !!r.revisado_en)) && (!FF.c || (r.categoria || 'SIN CATEGORÍA') === FF.c) && (!FF.d || r.fecha >= FF.d) && (!FF.h || r.fecha <= FF.h));
+  S.lg = S.lg || {};
+  const rows = todas.filter(r => (!FF.g || r.grupo_id === FF.g) && (!FF.p || pagoTipo(r) === FF.p) && (!FF.r || (FF.r === 'P' ? (!r.revisado_en && r.unidad === 'PLATON' && !esPasado(r)) : !!r.revisado_en)) && (!FF.c || (r.categoria || 'SIN CATEGORÍA') === FF.c) && (!FF.d || r.fecha >= FF.d) && (!FF.h || r.fecha <= FF.h));
   const tot = rows.reduce((s, r) => s + Number(r.monto), 0);
   const conCh = rows.filter(r => S.cruce[r.cargo_id + '-' + r.folio]).length, conEf = rows.filter(r => !S.cruce[r.cargo_id + '-' + r.folio] && (S.medio || {})[r.id]).length;
   $('#m').innerHTML = `${filtrosHTML(true, true)}
   <div class="sticky-f">${soloFolios() ? '' : `<select id="ffp"><option value="">Pago: todos</option>${[['CHEQUE', 'Con cheque'], ['EFECTIVO', 'En efectivo'], ['SIN', 'Sin asignar']].map(o => `<option value="${o[0]}" ${FF.p === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('')}</select><select id="ffr"><option value="">Revisión: todas</option><option value="P" ${FF.r === 'P' ? 'selected' : ''}>Pendientes de revisión</option><option value="R" ${FF.r === 'R' ? 'selected' : ''}>Revisados</option></select>`}
   <input type="date" id="ffd" value="${FF.d}" title="Desde"><input type="date" id="ffh" value="${FF.h}" title="Hasta"><button class="btn sec" id="ffl">Limpiar filtros</button></div>
   <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> folios · <b>${money(tot)}</b>${soloFolios() ? '' : ` · <span class="mut">${conCh} con cheque, ${conEf} en efectivo, ${rows.length - conCh - conEf} sin asignar</span>`}</div>
-  <div class="row" style="gap:8px">${(puedeCapturar() || soloFolios()) ? '<button class="btn gold" id="bcap">Nuevo folio</button><button class="btn sec" id="bfoto">Subir foto o archivo</button>' : ''}${(puedeCapturar() || puedeImpPl()) ? '<button class="btn sec" id="bimp">Importar Excel</button>' : ''}<button class="btn sec" id="xl">Descargar Excel</button><button class="btn sec" id="pdf">Descargar PDF</button></div></div>
-  <div class="tw"><table><thead><tr>${S.unidad ? '' : '<th>Unidad</th>'}<th>Cargo</th><th class="n">Folio</th><th>Fecha</th><th>Concepto</th><th class="n">Monto</th>${soloFolios() ? '' : '<th class="n">Total a pagar</th><th>Pago</th>'}${soloFolios() ? '' : '<th>Archivo</th><th>Estado</th>'}${puedeEdFol() ? '<th></th>' : ''}</tr></thead><tbody>
-  ${rows.map(r => { const ch = S.cruce[r.cargo_id + '-' + r.folio]; return `<tr data-d="${r.id}" style="cursor:pointer">${S.unidad ? '' : `<td>${nomU(r.unidad)}</td>`}<td>${CARGOS[r.cargo_id]}</td><td class="n folio">${r.folio}</td><td>${r.fecha.split('-').reverse().join('/')}</td><td class="wrap">${esc(r.concepto)}</td><td class="n">${money(r.monto)}</td>
+  <div class="row" style="gap:8px">${puedeLigar() && Object.keys(S.lg).filter(k => S.lg[k]).length === 1 ? '<span class="mut">1 folio seleccionado. La selección se conserva al cambiar de cargo.</span>' : ''}${puedeLigar() && Object.keys(S.lg).filter(k => S.lg[k]).length >= 2 ? `<button class="btn gold" id="blig">Ligar seleccionados (${Object.keys(S.lg).filter(k => S.lg[k]).length})</button>` : ''}${(puedeCapturar() || soloFolios()) ? '<button class="btn gold" id="bcap">Nuevo folio</button><button class="btn sec" id="bfoto">Subir foto o archivo</button>' : ''}${(puedeCapturar() || puedeImpPl()) ? '<button class="btn sec" id="bimp">Importar Excel</button>' : ''}<button class="btn sec" id="xl">Descargar Excel</button><button class="btn sec" id="pdf">Descargar PDF</button></div></div>
+  ${FF.g ? resumenGrupo(FF.g) : ''}<div class="tw"><table><thead><tr>${puedeLigar() ? '<th></th>' : ''}${S.unidad ? '' : '<th>Unidad</th>'}<th>Cargo</th><th class="n">Folio</th><th>Fecha</th><th>Concepto</th><th class="n">Monto</th>${soloFolios() ? '' : '<th class="n">Total a pagar</th><th>Pago</th>'}${soloFolios() ? '' : '<th>Archivo</th><th>Estado</th>'}${puedeEdFol() ? '<th></th>' : ''}</tr></thead><tbody>
+  ${rows.map(r => { const ch = S.cruce[r.cargo_id + '-' + r.folio]; return `<tr data-d="${r.id}" style="cursor:pointer">${puedeLigar() ? `<td><input type="checkbox" data-lg="${r.id}" style="width:auto" ${S.lg[r.id] ? 'checked' : ''}></td>` : ''}${S.unidad ? '' : `<td>${nomU(r.unidad)}</td>`}<td>${CARGOS[r.cargo_id]}</td><td class="n folio">${r.folio}</td><td>${r.fecha.split('-').reverse().join('/')}</td><td class="wrap">${esc(r.concepto)}</td><td class="n">${money(r.monto)}</td>
   ${soloFolios() ? '' : `<td class="n">${money(r.total_pagar != null ? r.total_pagar : r.monto)}${r.sin_factura ? ` <span class="badge b-bad" title="Sin factura">+${Number(r.pct_extra)}%</span>` : ''}</td>
   <td>${S.fp && S.fp[r.id] ? pagoBadgeFp(S.fp[r.id], S.sug[r.id]) : ch ? `<span class="badge b-ok">Cheque ${esc(ch)}</span>` : (S.medio || {})[r.id] ? `<span class="badge b-ok" title="${esc(S.medio[r.id].referencia || '')}">${S.medio[r.id].medio === 'EFECTIVO' ? 'Efectivo' : esc(S.medio[r.id].medio)}</span>` : '<span class="badge b-no">Sin asignar</span>'}</td>`}
-  ${soloFolios() ? '' : `<td>${archBadge(r)}</td><td>${estadoBadge(r)}</td>`}${puedeEdFol() ? `<td><a href="#" data-an="${r.id}" class="mut">Cancelar</a></td>` : ''}</tr>`; }).join('')}
+  ${soloFolios() ? '' : `<td>${archBadge(r)}</td><td>${estadoBadge(r)}${r.grupo_id ? ` <a href="#" class="badge b-no" data-g="${r.grupo_id}" title="Folios ligados: ver el grupo">Grupo ${r.grupo_id}</a>` : ''}</td>`}${puedeEdFol() ? `<td><a href="#" data-an="${r.id}" class="mut">Cancelar</a></td>` : ''}</tr>`; }).join('')}
   </tbody></table></div>`;
   ligaFiltros(vFolios);
   { const b1 = $('#bcap'), b2 = $('#bfoto'), b3 = $('#bimp');
     if (b1) b1.onclick = () => { preparaCap('EGRESO'); abreSub('folios', 'capturar'); };
     if (b2) b2.onclick = () => { preparaCap('EGRESO'); abreSub('folios', 'capturar'); const fi = $('#fotoin'); if (fi) fi.click(); };
     if (b3) b3.onclick = () => { S.impSub = ''; abreSub('folios', 'importar'); } }
-  document.querySelectorAll('tr[data-d]').forEach(t => t.onclick = e => { if (e.target.closest('[data-an]')) return; abreDetalle(+t.dataset.d); });
+  document.querySelectorAll('tr[data-d]').forEach(t => t.onclick = e => { if (e.target.closest('[data-an],[data-lg],[data-g]')) return; abreDetalle(+t.dataset.d); });
+  document.querySelectorAll('[data-lg]').forEach(c => c.onchange = () => { S.lg[c.dataset.lg] = c.checked; vFolios(); });
+  document.querySelectorAll('[data-g]').forEach(a => a.onclick = e => { e.preventDefault(); FF.g = +a.dataset.g; vFolios(); });
+  { const bq = $('#gq'); if (bq) bq.onclick = e => { e.preventDefault(); FF.g = 0; vFolios(); }; }
+  { const bl = $('#blig'); if (bl) bl.onclick = async () => {
+    const ids = Object.keys(S.lg).filter(k => S.lg[k]).map(Number);
+    const nota = prompt('Nota del grupo (opcional). Ej. proveedor o motivo:', '');
+    if (nota === null) return;
+    const { data, error } = await sb.rpc('folios_ligar', { p_ids: ids, p_nota: nota });
+    if (error) return alert(error.message);
+    S.lg = {}; await cargar(); FF.g = data; vFolios();
+  }; }
   const bind = (id, k) => { const e = $(id); if (e) e.onchange = ev => { FF[k] = ev.target.value; vFolios(); }; };
   bind('#ffp', 'p'); bind('#ffr', 'r'); bind('#ffd', 'd'); bind('#ffh', 'h');
-  $('#ffl').onclick = () => { S.ff = { p: '', r: '', c: '', d: '', h: '' }; S.q = ''; S.mes = ''; vFolios(); };
+  $('#ffl').onclick = () => { S.ff = { p: '', r: '', c: '', d: '', h: '', g: 0 }; S.lg = {}; S.q = ''; S.mes = ''; vFolios(); };
   const extraF = () => [FF.p && 'Pago: ' + ({ CHEQUE: 'con cheque', EFECTIVO: 'en efectivo', SIN: 'sin asignar' }[FF.p]), FF.c && 'Categoría: ' + FF.c, FF.d && 'Desde: ' + fFecha(FF.d), FF.h && 'Hasta: ' + fFecha(FF.h)].filter(Boolean);
   const nomF = 'folios_' + (S.unidad ? S.unidad + '_' : '') + (S.cargo ? CARGOS[S.cargo] + '_' : '') + hoyISO();
-  $('#xl').onclick = () => { const f = rows.map(r => ({ UNIDAD: r.unidad, FECHA: r.fecha, CARGO: CARGOS[r.cargo_id], FOLIO: r.folio, CONCEPTO: r.concepto, MONTO: Number(r.monto), PAGO: pagoTxt(r), REFERENCIA: ((S.medio || {})[r.id] || {}).referencia || '' })); f.push({ CONCEPTO: 'TOTAL', MONTO: tot }); bajarExcel(nomF + '.xlsx', f); };
+  $('#xl').onclick = () => { const f = rows.map(r => ({ UNIDAD: r.unidad, FECHA: r.fecha, CARGO: CARGOS[r.cargo_id], FOLIO: r.folio, CONCEPTO: r.concepto, MONTO: Number(r.monto), PAGO: pagoTxt(r), GRUPO: r.grupo_id || '', REFERENCIA: ((S.medio || {})[r.id] || {}).referencia || '' })); f.push({ CONCEPTO: 'TOTAL', MONTO: tot }); bajarExcel(nomF + '.xlsx', f); };
   $('#pdf').onclick = () => {
     const cols = [...(S.unidad ? [] : [{ t: 'Unidad', w: 1 }]), { t: 'Cargo', w: 1.2 }, { t: 'Folio', w: .7, n: 1 }, { t: 'Fecha', w: 1 }, { t: 'Concepto', w: 5 }, { t: 'Monto', w: 1.4, n: 1 }, { t: 'Pago', w: 1.6 }];
     const filas = rows.map(r => [...(S.unidad ? [] : [nomU(r.unidad)]), CARGOS[r.cargo_id], r.folio, fFecha(r.fecha), r.concepto, money(r.monto), pagoTxt(r)]);
@@ -501,6 +519,7 @@ function abreDetalle(id) {
     <label>Fecha de vencimiento</label><input id="pv" type="date" value="${r.vencimiento || ''}">
     <label>Nombre</label><input id="pnm" value="${esc(r.nombre || '')}">
     <div class="row" style="margin-top:8px"><button class="btn" id="dpg">Guardar datos de pago</button><button class="btn sec" id="dpdf">Descargar PDF</button></div>` : ''}
+  ${r.grupo_id ? `<h3 style="margin:16px 0 4px;font-size:15px">Folios ligados · Grupo ${r.grupo_id}</h3>${(() => { const m = miembrosGrupo(r.grupo_id), tot = m.reduce((s, x) => s + Number(x.monto), 0) || 1; return m.map(x => `<div class="row" style="justify-content:space-between;margin:4px 0"><span>${x.id === r.id ? '<b>' : ''}${esc(CARGOS[x.cargo_id] || '')} · folio ${x.folio} · ${money(x.monto)} (${(Number(x.monto) * 100 / tot).toFixed(1)}%)${x.id === r.id ? '</b>' : ''}<span class="mut"> · ${esc(x.concepto)}</span></span>${x.id === r.id ? '' : `<button class="btn sec" data-ver="${x.id}">Ver</button>`}</div>`).join('') + `<div class="mut">Total del grupo: ${money(tot)}</div>` + (puedeLigar() ? `<div style="margin-top:6px"><button class="btn sec" id="ddes">Quitar este folio del grupo</button> <button class="btn sec" id="dgrp">Ver el grupo en la lista</button></div>` : ''); })()}` : ''}
   <h3 style="margin:16px 0 4px;font-size:15px">Archivos</h3>${archs}
   <div class="row" style="margin-top:8px">
     ${ed && esPl ? `<button class="btn sec" id="dga">Adjuntar folio (PDF o imagen)</button><input type="file" id="dfa" accept="application/pdf,image/*" style="display:none">` : ''}
@@ -537,6 +556,12 @@ function abreDetalle(id) {
       descarga(blob, nombre);
       await subir('GENERADO', new File([blob], nombre, { type: 'application/pdf' }));
     } catch (e) { msg(e.message || String(e)); }
+  };
+  d.querySelectorAll('[data-ver]').forEach(b => b.onclick = () => abreDetalle(+b.dataset.ver));
+  if ($('#dgrp')) $('#dgrp').onclick = () => { S.ff = S.ff || {}; S.ff.g = r.grupo_id; cierraDetalle(); S.tab = 'folios'; S.padre = ''; shell(); };
+  if ($('#ddes')) $('#ddes').onclick = async () => {
+    if (!confirm('Se quitará este folio del grupo. El folio se conserva.')) return;
+    const { error } = await sb.rpc('folios_desligar', { p_id: id }); if (error) return msg(error.message); await refresca(); $('#dmsg').innerHTML = '<div class="msg ok">Folio desligado del grupo.</div>';
   };
   if ($('#pb')) $('#pb').oninput = e => { e.target.value = fmtBanco(e.target.value); };
   if ($('#dpg')) $('#dpg').onclick = async () => {
@@ -968,7 +993,8 @@ function vCapturarFolio() {
   $('#m').innerHTML = `<div class="fv2"><div class="card">${solo ? '' : `<div class="row" style="justify-content:space-between"><div class="seg" id="sg">${['EGRESO', 'INGRESO'].map(t => `<button data-t="${t}" class="${t === 'EGRESO' ? 'on' : ''}">${t === 'EGRESO' ? 'Folio (egreso)' : 'Ingreso'}</button>`).join('')}</div></div>`}
     ${solo ? '' : `<div class="chips" id="dv" style="margin-top:10px">${divs.map(d => `<button class="chip ${nf.div === d ? 'on' : ''}" data-d="${d}">${nomU(d)}</button>`).join('')}${veCancun() ? '<button class="chip" id="dcan">Cancún</button>' : ''}</div>`}
     <div style="margin-top:10px"><button class="btn" id="foto" style="width:100%">Subir archivo</button><input type="file" id="fotoin" accept="image/*" style="display:none"><div id="lee"></div></div>
-    <label style="display:flex;gap:8px;align-items:center;margin-top:12px"><input type="checkbox" id="dos" style="width:auto" ${nf.dos ? 'checked' : ''}> Dos folios en una misma hoja</label></div>
+    <label style="display:flex;gap:8px;align-items:center;margin-top:12px"><input type="checkbox" id="dos" style="width:auto" ${nf.dos ? 'checked' : ''}> Dos folios en una misma hoja</label>
+    ${solo ? '' : `<label>Ligar con un folio ya capturado (opcional)</label><select id="lig"><option value="">Sin ligar</option>${S.rows.filter(r => r.tipo === 'EGRESO' && r.nombre).sort((a, b) => b.id - a.id).slice(0, 60).map(r => `<option value="${r.id}" ${String(nf.lig) === String(r.id) ? 'selected' : ''}>${esc(CARGOS[r.cargo_id] || '')} folio ${r.folio} · ${esc(r.nombre)} · ${money(r.monto)}${r.grupo_id ? ' · Grupo ' + r.grupo_id : ''}</option>`).join('')}</select>`}</div>
     <datalist id="dl-nombres">${nombres.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
     <div class="${nf.dos ? 'pair' : ''}">${nf.items.map(bloque).join('')}</div>
     <div class="card" style="margin-top:12px"><label>Folio escaneado (opcional): PDF o imagen</label><input type="file" id="cfile" accept="application/pdf,image/*">
@@ -976,6 +1002,7 @@ function vCapturarFolio() {
   if ($('#sg')) $('#sg').querySelectorAll('button').forEach(b => b.onclick = () => { f.tipo = b.dataset.t; vCapturar(); });
   if ($('#dv')) $('#dv').querySelectorAll('button[data-d]').forEach(b => b.onclick = () => { nf.div = b.dataset.d; nf.items.forEach(it => it.cargo = 0); vCapturarFolio(); });
   if ($('#dcan')) $('#dcan').onclick = () => { S.tab = 'cancun'; shell(); };
+  if ($('#lig')) $('#lig').onchange = e => { nf.lig = e.target.value; };
   $('#dos').onchange = e => { nf.dos = e.target.checked; vCapturarFolio(); };
   $('#foto').onclick = () => $('#fotoin').click();
   $('#fotoin').onchange = e => { const file = e.target.files[0]; e.target.value = ''; if (file) leerLibreta(file); };
@@ -998,6 +1025,7 @@ function vCapturarFolio() {
       if (!solo && it.medio === 'TRANSFERENCIA' && (!it.chequera || !it.banco)) return err(p + 'Se requiere la chequera y los datos bancarios.');
     }
     const items = nf.items.map(it => ({ cargo: it.cargo, medio_pago: solo ? '' : it.medio, fecha: it.fecha, vencimiento: it.venc || '', nombre: it.nombre, concepto: it.concepto, monto: parseFloat(it.monto), chequera_id: solo || it.medio === 'EFECTIVO' ? '' : String(it.chequera || ''), numero_cheque: it.medio === 'CHEQUE' ? it.cheque : '', datos_bancarios: solo ? '' : it.banco, periodo: solo ? '' : it.periodo }));
+    if (nf.lig && !solo) items[0].ligar_a = nf.lig;
     const b = $('#go'); b.disabled = true;
     const { data, error } = await sb.rpc('folios_generar', { p_items: items });
     b.disabled = false;
@@ -1005,7 +1033,7 @@ function vCapturarFolio() {
     let aviso = '';
     const fa = $('#cfile') && $('#cfile').files[0];
     if (fa && data[0]) { try { await subeArchivo(data[0].id, 'ORIGINAL', fa); } catch (e) { aviso = 'El archivo no pudo cargarse (' + (e.message || e) + '); se puede adjuntar después desde el folio.'; } }
-    S.nf = { div: nf.div, dos: nf.dos, items: nf.items.map(it => itemNuevo(nf.div, it)) };
+    S.nf = { div: nf.div, dos: nf.dos, lig: '', items: nf.items.map(it => itemNuevo(nf.div, it)) };
     await cargar(); vCapturarFolio();
     S.ultimaHoja = data.map(x => x.id);
     $('#res').innerHTML = `<div class="msg ok">Guardado: ${data.map(x => 'folio ' + x.folio + ' · ' + esc(CARGOS[x.cargo_id] || '') + ' · ' + money(x.monto)).join(' | ')}</div>${aviso ? `<div class="msg err">${esc(aviso)}</div>` : ''}<button class="btn" id="pdfn" style="margin-top:8px">Descargar PDF de la hoja</button>`;
