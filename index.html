@@ -75,7 +75,8 @@ main{max-width:none;padding:20px 32px 60px}
 .card{max-width:640px}
 table{font-size:14.5px}
 th,td{padding:9px 14px}
-.tw{max-height:calc(100vh - 290px);overflow:auto}
+.tw{max-height:calc(100vh - 400px);min-height:260px;overflow:auto}
+.tw td .btn{padding:5px 10px;font-size:12.5px}
 .sticky-f input,.sticky-f select{max-width:340px}
 .grid{grid-template-columns:repeat(4,1fr)}
 td.wrap{white-space:normal;min-width:320px}
@@ -98,6 +99,7 @@ const limpia = n => String(n || '').replace(/^ING\.\s*/i, '').trim().toUpperCase
 const S = { arch: {}, acum: [], cancun: [], cn: { sub: 'EFECTIVO', tipo: 'EGRESO', mes: '', q: '', villa: '' }, ac: { semana: '', cargo: 0, q: '', desde: '', sel: {} }, det: null, unidad: '', perfil: null, rows: [], cruce: {}, tab: 'folios', cargo: 0, mes: '', q: '', anio: 2026, imp: null };
 const puedeCapturar = () => S.perfil && ['administrador', 'capturista'].includes(S.perfil.rol);
 const esAdmin = () => S.perfil && S.perfil.rol === 'administrador';
+const puedeEdFol = () => !!(S.perfil && S.perfil.puede_editar_folios);
 const puedeImpPl = () => !!(S.perfil && S.perfil.solo_folios && S.perfil.puede_importar_platon);
 const soloFolios = () => !!(S.perfil && S.perfil.solo_folios);
 const veCancun = () => !!(S.perfil && S.perfil.puede_cancun && !S.perfil.solo_folios);
@@ -168,7 +170,7 @@ async function cargarExtra() {
   if (veCancun()) {
     let cn = []; from = 0;
     for (;;) {
-      const { data, error } = await sb.from('cancun_movimientos').select('id,fecha,cargo,folio,concepto,monto,pago,tipo,categoria,villa,comentarios,depto,pagado,cuenta_id').order('fecha', { ascending: false }).range(from, from + 999);
+      const { data, error } = await sb.from('cancun_movimientos').select('id,fecha,cargo,folio,concepto,monto,pago,tipo,categoria,villa,comentarios,depto,pagado,pagado_nota,cuenta_id').order('fecha', { ascending: false }).range(from, from + 999);
       if (error) break;
       cn = cn.concat(data); if (data.length < 1000) break; from += 1000;
     }
@@ -184,7 +186,7 @@ async function cargarExtra() {
       S.repCn = {};
       const pg = async (t, c) => { let o = [], f = 0; for (;;) { const r = await sb.from(t).select(c).range(f, f + 999); if (r.error) return null; o = o.concat(r.data); if (r.data.length < 1000) return o; f += 1000; } };
       const gc = await pg('cancun_gastos_comp', 'id,id_mov'), rp = await pg('cancun_reparto', 'id_gasto,villa,monto');
-      if (gc && rp) { const m = {}; gc.forEach(g => m[g.id] = g.id_mov); rp.forEach(x => { const k = m[x.id_gasto]; if (k) (S.repCn[k] = S.repCn[k] || []).push({ villa: x.villa, monto: Number(x.monto) }); }); Object.values(S.repCn).forEach(l => l.sort((p, q) => p.villa.localeCompare(q.villa))); }
+      if (gc && rp) { const m = {}; gc.forEach(g => m[g.id] = g.id_mov); rp.forEach(x => { const k = m[x.id_gasto]; if (k && Number(x.monto) > 0) (S.repCn[k] = S.repCn[k] || []).push({ villa: x.villa, monto: Number(x.monto) }); }); Object.values(S.repCn).forEach(l => l.sort((p, q) => p.villa.localeCompare(q.villa))); }
     } catch (e) { }
   }
 }
@@ -412,11 +414,11 @@ function vFolios() {
   <input type="date" id="ffd" value="${FF.d}" title="Desde"><input type="date" id="ffh" value="${FF.h}" title="Hasta"><button class="btn sec" id="ffl">Limpiar filtros</button></div>
   <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> folios · <b>${money(tot)}</b>${soloFolios() ? '' : ` · <span class="mut">${conCh} con cheque, ${conEf} en efectivo, ${rows.length - conCh - conEf} sin asignar</span>`}</div>
   <div class="row" style="gap:8px">${(puedeCapturar() || soloFolios()) ? '<button class="btn gold" id="bcap">Nuevo folio</button><button class="btn sec" id="bfoto">Subir foto o archivo</button>' : ''}${(puedeCapturar() || puedeImpPl()) ? '<button class="btn sec" id="bimp">Importar Excel</button>' : ''}<button class="btn sec" id="xl">Descargar Excel</button><button class="btn sec" id="pdf">Descargar PDF</button></div></div>
-  <div class="tw"><table><thead><tr>${S.unidad ? '' : '<th>Unidad</th>'}<th>Cargo</th><th class="n">Folio</th><th>Fecha</th><th>Concepto</th><th class="n">Monto</th>${soloFolios() ? '' : '<th class="n">Total a pagar</th><th>Pago</th>'}${soloFolios() ? '' : '<th>Archivo</th><th>Estado</th>'}${esAdmin() ? '<th></th>' : ''}</tr></thead><tbody>
+  <div class="tw"><table><thead><tr>${S.unidad ? '' : '<th>Unidad</th>'}<th>Cargo</th><th class="n">Folio</th><th>Fecha</th><th>Concepto</th><th class="n">Monto</th>${soloFolios() ? '' : '<th class="n">Total a pagar</th><th>Pago</th>'}${soloFolios() ? '' : '<th>Archivo</th><th>Estado</th>'}${puedeEdFol() ? '<th></th>' : ''}</tr></thead><tbody>
   ${rows.map(r => { const ch = S.cruce[r.cargo_id + '-' + r.folio]; return `<tr data-d="${r.id}" style="cursor:pointer">${S.unidad ? '' : `<td>${nomU(r.unidad)}</td>`}<td>${CARGOS[r.cargo_id]}</td><td class="n folio">${r.folio}</td><td>${r.fecha.split('-').reverse().join('/')}</td><td class="wrap">${esc(r.concepto)}</td><td class="n">${money(r.monto)}</td>
   ${soloFolios() ? '' : `<td class="n">${money(r.total_pagar != null ? r.total_pagar : r.monto)}${r.sin_factura ? ` <span class="badge b-bad" title="Sin factura">+${Number(r.pct_extra)}%</span>` : ''}</td>
   <td>${S.fp && S.fp[r.id] ? pagoBadgeFp(S.fp[r.id], S.sug[r.id]) : ch ? `<span class="badge b-ok">Cheque ${esc(ch)}</span>` : (S.medio || {})[r.id] ? `<span class="badge b-ok" title="${esc(S.medio[r.id].referencia || '')}">${S.medio[r.id].medio === 'EFECTIVO' ? 'Efectivo' : esc(S.medio[r.id].medio)}</span>` : '<span class="badge b-no">Sin asignar</span>'}</td>`}
-  ${soloFolios() ? '' : `<td>${archBadge(r)}</td><td>${estadoBadge(r)}</td>`}${esAdmin() ? `<td><a href="#" data-an="${r.id}" class="mut">Anular</a></td>` : ''}</tr>`; }).join('')}
+  ${soloFolios() ? '' : `<td>${archBadge(r)}</td><td>${estadoBadge(r)}</td>`}${puedeEdFol() ? `<td><a href="#" data-an="${r.id}" class="mut">Cancelar</a></td>` : ''}</tr>`; }).join('')}
   </tbody></table></div>`;
   ligaFiltros(vFolios);
   { const b1 = $('#bcap'), b2 = $('#bfoto'), b3 = $('#bimp');
@@ -437,7 +439,7 @@ function vFolios() {
     bajarPDF(nomF + '.pdf', 'Folios (' + rows.length + ')', txtFiltros(extraF()), cols, filas, pie);
   };
   document.querySelectorAll('[data-an]').forEach(a => a.onclick = async e => {
-    e.preventDefault(); const nota = prompt('Motivo de anulación del folio (el registro se conserva):'); if (!nota) return;
+    e.preventDefault(); const nota = prompt('Motivo de la cancelación del folio (el registro se conserva):'); if (!nota) return;
     const { error } = await sb.rpc('platon_anular', { p_id: +a.dataset.an, p_nota: nota }); if (error) return alert(error.message);
     await cargar(); vFolios();
   });
@@ -447,7 +449,7 @@ function vFolios() {
 /* ---------- Detalle de folio: edición, archivos, revisión ---------- */
 const ahoraMs = () => Date.now();
 const venceMs = r => new Date(r.creado_en).getTime() + 864e5;
-const editable = r => soloFolios() ? (r.creado_por === S.perfil.id && !r.revisado_en && ahoraMs() < venceMs(r)) : !!puedeCapturar();
+const editable = r => soloFolios() ? (r.creado_por === S.perfil.id && !r.revisado_en && ahoraMs() < venceMs(r)) : puedeEdFol();
 const esPasado = r => r.origen === 'sheet' || r.origen === 'excel';
 const archBadge = r => { const a = S.arch[r.id] || {}; return a.FIRMADO ? '<span class="badge b-ok">Firmado</span>' : a.ORIGINAL ? '<span class="badge b-no">Adjunto</span>' : a.GENERADO ? '<span class="badge b-no">Generado</span>' : esPasado(r) ? '' : '<span class="badge b-bad">Sin archivo</span>'; };
 const estadoBadge = r => r.revisado_en ? '<span class="badge b-ok">Revisado</span>' : (soloFolios() ? (r.creado_por === S.perfil.id && ahoraMs() < venceMs(r) ? '<span class="badge b-no">Editable</span>' : '<span class="badge b-no">Bloqueado</span>') : (r.unidad === 'PLATON' && !esPasado(r) ? '<span class="badge b-bad">Por revisar</span>' : ''));
@@ -611,6 +613,7 @@ function imprimeFoliosCancun(lista) {
   });
   d.save('folios_cancun_' + (lista.length === 1 ? lista[0].folio : lista[0].folio + '_' + lista[lista.length - 1].folio) + '.pdf');
 }
+const esCanc = r => r.pagado === false && /^CANCELADO/i.test(r.pagado_nota || '');
 function vCancun() {
   const C = S.cn, base = S.cancun; S.cnSel = S.cnSel || {};
   const subs = [['EFECTIVO', 'Efectivo'], ['CHEQUE', 'Cheques'], ['SPEI', 'Transferencias']].filter(x => x[0] !== 'SPEI' || base.some(r => r.pago === 'SPEI'));
@@ -619,14 +622,14 @@ function vCancun() {
   const rows = base.filter(r => r.pago === C.sub && (!C.tipo || r.tipo === C.tipo) && (!C.mes || (r.fecha || '').slice(5, 7) === C.mes) && (!C.villa || r.villa === C.villa) &&
     (!C.q || [r.concepto, r.categoria, r.villa, r.folio, r.cargo].join(' ').toLowerCase().includes(C.q.toLowerCase())));
   const tot = rows.reduce((t, r) => t + (r.pagado === false ? 0 : Number(r.monto || 0)), 0);
-  const pendT = rows.reduce((t, r) => t + (r.pagado === false ? Number(r.monto || 0) : 0), 0);
+  const pendT = rows.reduce((t, r) => t + (r.pagado === false && !esCanc(r) ? Number(r.monto || 0) : 0), 0);
   $('#m').innerHTML = `${S.cnIng ? chipsIng() : panelServicios()}<div class="row" style="margin-bottom:10px"><div class="seg" id="cs">${subs.map(x => `<button data-s="${x[0]}" class="${C.sub === x[0] ? 'on' : ''}">${x[1]} (${base.filter(r => r.pago === x[0] && (!C.tipo || r.tipo === C.tipo)).length})</button>`).join('')}</div></div>
   <div class="sticky-f"><select id="ct"><option value="EGRESO" ${C.tipo === 'EGRESO' ? 'selected' : ''}>Egresos</option><option value="INGRESO" ${C.tipo === 'INGRESO' ? 'selected' : ''}>Ingresos</option><option value="PRESTAMO" ${C.tipo === 'PRESTAMO' ? 'selected' : ''}>Préstamos</option><option value="" ${!C.tipo ? 'selected' : ''}>Todos los tipos</option></select>
   <select id="cm"><option value="">Todo el año</option>${meses}</select><select id="cv"><option value="">Todas las villas</option>${villas.map(v => `<option ${C.villa === v ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>
   <input id="cq" placeholder="Buscar concepto, villa o folio…" value="${esc(C.q)}"></div>
   <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> registros · <b>${money(tot)}</b>${pendT ? ` <span class="mut">(sin incluir ${money(pendT)} pendiente de pago)</span>` : ''}</div><div class="row"><button class="btn gold" id="cnew">${S.cnIng ? 'Importar pagos' : 'Nuevo folio'}</button><button class="btn sec" id="cpi">Imprimir seleccionados (0)</button><button class="btn sec" id="cx">Descargar Excel</button></div></div>
   <div class="tw"><table><thead><tr><th><input type="checkbox" id="cka" title="Seleccionar todos"></th><th>Fecha</th><th>Folio</th><th>Cargo</th><th>Concepto</th><th>Categoría</th><th>Villa</th><th class="n">Monto</th><th>Pago y semana</th><th></th></tr></thead><tbody>
-  ${rows.map(r => `<tr><td>${r.tipo === 'EGRESO' ? `<input type="checkbox" class="ckf" data-i="${esc(r.id)}" ${S.cnSel[r.id] ? 'checked' : ''}>` : ''}</td><td>${fFecha(r.fecha || '')}</td><td class="folio">${esc(r.folio || '')}</td><td>${esc(r.cargo || '')}</td><td class="wrap">${esc(r.concepto || '')}</td><td>${esc(r.categoria || '')}</td><td>${esc(r.villa || '')}${(S.repCn || {})[r.id] ? '<div class="mut" style="font-size:11px">' + S.repCn[r.id].map(x => esc(x.villa) + ' ' + money(x.monto)).join(' · ') + '</div>' : ''}</td><td class="n">${money(r.monto)}</td><td>${r.pagado === false ? '<span class="badge b-bad">Pendiente de pago</span>' : (S.fpc && S.fpc[r.id] ? pagoBadgeFp(S.fpc[r.id]) : '')}</td><td>${r.tipo === 'EGRESO' ? `<button class="btn sec pim" data-i="${esc(r.id)}">Imprimir</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="10" class="mut">Sin registros con los filtros seleccionados.</td></tr>'}
+  ${rows.map(r => `<tr${esCanc(r) ? ' style="opacity:.6;text-decoration:line-through"' : ''}><td>${r.tipo === 'EGRESO' && !esCanc(r) ? `<input type="checkbox" class="ckf" data-i="${esc(r.id)}" ${S.cnSel[r.id] ? 'checked' : ''}>` : ''}</td><td>${fFecha(r.fecha || '')}</td><td class="folio">${esc(r.folio || '')}</td><td>${esc(r.cargo || '')}</td><td class="wrap">${esc(r.concepto || '')}</td><td>${esc(r.categoria || '')}</td><td>${esc(r.villa || '')}${(S.repCn || {})[r.id] ? '<div class="mut" style="font-size:11px;white-space:normal;max-width:380px">' + S.repCn[r.id].map(x => esc(x.villa) + ' ' + money(x.monto)).join(' · ') + '</div>' : ''}</td><td class="n">${money(r.monto)}</td><td>${esCanc(r) ? `<span class="badge b-no" title="${esc(r.pagado_nota)}">Cancelado</span>` : r.pagado === false ? '<span class="badge b-bad">Pendiente de pago</span>' : (S.fpc && S.fpc[r.id] ? pagoBadgeFp(S.fpc[r.id]) : '')}</td><td>${r.tipo === 'EGRESO' && !esCanc(r) ? `<button class="btn sec pim" data-i="${esc(r.id)}">Imprimir</button>` : ''}${puedeEdFol() ? (esCanc(r) ? ` <button class="btn ghost rac" data-i="${esc(r.id)}">Reactivar</button>` : `${r.tipo === 'EGRESO' ? ` <button class="btn ghost edc" data-i="${esc(r.id)}">Editar</button>` : ''} <button class="btn ghost cac" data-i="${esc(r.id)}">Cancelar</button>`) : ''}</td></tr>`).join('') || '<tr><td colspan="10" class="mut">Sin registros con los filtros seleccionados.</td></tr>'}
   <tr class="tot"><td colspan="7">TOTAL</td><td class="n">${money(tot)}</td><td></td><td></td></tr></tbody></table></div>`;
   { const ds = $('#dsrv'); if (ds) ds.ontoggle = () => { S.srvAbierto = ds.open; }; }
   document.querySelectorAll('#cs button').forEach(b => b.onclick = () => { C.sub = b.dataset.s; vCancun(); });
@@ -635,44 +638,58 @@ function vCancun() {
   $('#cka').onchange = e => { rows.filter(r => r.tipo === 'EGRESO').forEach(r => S.cnSel[r.id] = e.target.checked); document.querySelectorAll('.ckf').forEach(c => c.checked = e.target.checked); selN(); };
   document.querySelectorAll('.pim').forEach(b => b.onclick = () => imprimeFoliosCancun([S.cancun.find(x => x.id === b.dataset.i)]));
   $('#cpi').onclick = () => { const l = rows.filter(r => S.cnSel[r.id]); if (!l.length) return alert('Se requiere seleccionar al menos un folio.'); imprimeFoliosCancun(l); };
-  selN(); ligaChipsIng(); $('#cnew').onclick = S.cnIng ? () => alert('La lectura de archivos de pagos de Cancún (CSV del banco, PDF de Airbnb y archivo de pagos) se encuentra en preparación. Se requieren archivos de ejemplo para configurarla.') : abreCapturaCancun;
+  document.querySelectorAll('.edc').forEach(b => b.onclick = () => { const x = S.cancun.find(z => z.id === b.dataset.i); if (x) abreCapturaCancun(x); });
+  document.querySelectorAll('.cac').forEach(b => b.onclick = async () => {
+    const x = S.cancun.find(z => z.id === b.dataset.i); if (!x) return;
+    const mo = prompt('Motivo de la cancelación del folio ' + x.folio + ' (el registro se conserva):'); if (!mo || !mo.trim()) return;
+    const { error } = await sb.rpc('cancun_folio_cancelar', { p_id: x.id, p_motivo: mo }); if (error) return alert(error.message);
+    await cargar(); vCancun();
+  });
+  document.querySelectorAll('.rac').forEach(b => b.onclick = async () => {
+    const x = S.cancun.find(z => z.id === b.dataset.i); if (!x || !confirm('¿Reactivar el folio ' + x.folio + '?')) return;
+    const { error } = await sb.rpc('cancun_folio_reactivar', { p_id: x.id }); if (error) return alert(error.message);
+    await cargar(); vCancun();
+  });
+  selN(); ligaChipsIng(); $('#cnew').onclick = S.cnIng ? () => alert('La lectura de archivos de pagos de Cancún (CSV del banco, PDF de Airbnb y archivo de pagos) se encuentra en preparación. Se requieren archivos de ejemplo para configurarla.') : () => abreCapturaCancun();
   $('#ct').onchange = e => { C.tipo = e.target.value; vCancun(); }; $('#cm').onchange = e => { C.mes = e.target.value; vCancun(); }; $('#cv').onchange = e => { C.villa = e.target.value; vCancun(); };
   $('#cq').oninput = e => { C.q = e.target.value; clearTimeout(vCancun.t); vCancun.t = setTimeout(() => { vCancun(); const n = $('#cq'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); }, 250); };
-  $('#cx').onclick = () => { const f = rows.map(r => ({ FECHA: r.fecha, FOLIO: r.folio, CARGO: r.cargo, CONCEPTO: r.concepto, CATEGORIA: r.categoria, VILLA: r.villa, MONTO: Number(r.monto), PAGO: r.pagado === false ? 'Pendiente de pago' : (S.fpc && S.fpc[r.id] ? pagoTxtFp(S.fpc[r.id]) : '') })); f.push({ CONCEPTO: 'TOTAL', MONTO: tot }); bajarExcel('cancun_' + C.sub.toLowerCase() + '_' + hoyISO() + '.xlsx', f); };
+  $('#cx').onclick = () => { const f = rows.map(r => ({ FECHA: r.fecha, FOLIO: r.folio, CARGO: r.cargo, CONCEPTO: r.concepto, CATEGORIA: r.categoria, VILLA: r.villa, MONTO: Number(r.monto), PAGO: esCanc(r) ? 'Cancelado' : r.pagado === false ? 'Pendiente de pago' : (S.fpc && S.fpc[r.id] ? pagoTxtFp(S.fpc[r.id]) : '') })); f.push({ CONCEPTO: 'TOTAL', MONTO: tot }); bajarExcel('cancun_' + C.sub.toLowerCase() + '_' + hoyISO() + '.xlsx', f); };
 }
 
 /* ---------- Captura de folios de Cancún ---------- */
 async function recargaCuentasCn() { const cu = await sb.from('cancun_cuentas').select('id,beneficiario,banco,cuenta,nota').eq('activo', true); if (!cu.error) S.cuentasCn = cu.data || []; }
-async function abreCapturaCancun() {
+async function abreCapturaCancun(ed) {
+  if (ed && !puedeEdFol()) return;
   const bajas = new Set((S.villasBaja || []).map(v => v.villa));
   const todas = [...new Set((S.cancun || []).map(r => r.villa).filter(Boolean))].filter(v => !bajas.has(v)).sort();
   const propias = todas.filter(v => !['CANCUN', 'GENERAL', 'VARIAS / COMPARTIDO'].includes(v));
-  const cats = [...new Set((S.cancun || []).filter(r => r.tipo === 'EGRESO' && r.categoria).map(r => r.categoria))].sort();
+  const cats = [...new Set([...(S.cancun || []).filter(r => r.tipo === 'EGRESO' && r.categoria).map(r => r.categoria), ...(ed && ed.categoria ? [ed.categoria] : [])])].sort();
+  if (ed) (S.repCn[ed.id] || []).forEach(x => { if (!propias.includes(x.villa)) propias.push(x.villa); }); propias.sort();
   const bens = [...new Set([...(S.cancun || []).filter(r => r.tipo === 'EGRESO').map(r => r.concepto), ...(S.cuentasCn || []).map(c => c.beneficiario)].filter(Boolean))].sort();
   const hoy = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
   const st = { rep: {}, nueva: false };
-  let prox = '…'; try { const r = await sb.rpc('cancun_siguiente_folio'); if (!r.error) prox = r.data; } catch (e) { }
+  let prox = '…'; if (!ed) try { const r = await sb.rpc('cancun_siguiente_folio'); if (!r.error) prox = r.data; } catch (e) { }
   const w = document.createElement('div'); w.id = 'cnmodal';
   w.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;overflow:auto;padding:20px 12px';
   w.innerHTML = `<div class="card" style="max-width:720px;margin:0 auto">
-  <div class="row" style="justify-content:space-between"><b style="font-size:16px">Nuevo folio de Cancún</b><button class="btn ghost" id="nx">Cerrar</button></div>
-  <div class="msg info">Folio que se asignará: <b class="folio" style="font-size:20px">${esc(prox)}</b></div>
+  <div class="row" style="justify-content:space-between"><b style="font-size:16px">${ed ? 'Editar folio ' + esc(ed.folio) : 'Nuevo folio de Cancún'}</b><button class="btn ghost" id="nx">Cerrar</button></div>
+  <div class="msg info">${ed ? 'Folio: ' : 'Folio que se asignará: '}<b class="folio" style="font-size:20px">${esc(ed ? ed.folio : prox)}</b>${ed ? '<br>La forma de pago (' + esc(ed.pago || '') + ') no puede modificarse. Los cambios se reflejan en la caja semanal y quedan registrados.' : ''}</div>
   <label>Fecha</label><input type="date" id="nf" value="${hoy}">
   <label>Beneficiario</label><input id="nb" list="nbl" autocomplete="off" placeholder="Nombre del beneficiario"><datalist id="nbl">${bens.map(b => `<option value="${esc(b)}">`).join('')}</datalist>
   <label>Categoría</label><select id="nc"><option value="">Seleccionar…</option>${cats.map(c => `<option>${esc(c)}</option>`).join('')}</select>
-  <label>Forma de pago</label><div class="seg" id="np">${['SPEI', 'EFECTIVO', 'CHEQUE'].map((p, i) => `<button data-p="${p}" class="${i === 0 ? 'on' : ''}">${p === 'SPEI' ? 'Transferencia' : p === 'EFECTIVO' ? 'Efectivo' : 'Cheque'}</button>`).join('')}</div>
+  ${ed ? '' : `<label>Forma de pago</label><div class="seg" id="np">${['SPEI', 'EFECTIVO', 'CHEQUE'].map((p, i) => `<button data-p="${p}" class="${i === 0 ? 'on' : ''}">${p === 'SPEI' ? 'Transferencia' : p === 'EFECTIVO' ? 'Efectivo' : 'Cheque'}</button>`).join('')}</div>`}
   <div id="ncta"></div>
   <label>Monto</label><input id="nm" type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00">
   <label>Villa</label><select id="nv"><option value="">Seleccionar…</option>${propias.map(v => `<option>${esc(v)}</option>`).join('')}<option>VARIAS / COMPARTIDO</option>${todas.filter(v => ['CANCUN', 'GENERAL'].includes(v)).map(v => `<option>${esc(v)}</option>`).join('')}</select>
   <div id="nrep"></div>
   <label>Comentarios (opcional)</label><input id="nco" autocomplete="off">
-  <div style="margin-top:14px"><button class="btn gold" id="ngo" style="width:100%">Guardar folio</button></div><div id="nres"></div></div>`;
+  <div style="margin-top:14px"><button class="btn gold" id="ngo" style="width:100%">${ed ? 'Guardar cambios' : 'Guardar folio'}</button></div><div id="nres"></div></div>`;
   document.body.appendChild(w);
   const q = s => w.querySelector(s); let pago = 'SPEI', ctaSel = '';
   q('#nx').onclick = () => w.remove();
   const ctas = () => { const n = normN(q('#nb').value); const l = (S.cuentasCn || []); const coinc = n ? l.filter(c => { const b = normN(c.beneficiario); return b === n || b.includes(n) || n.includes(b); }) : []; return { coinc, l }; };
   const pintaCta = () => {
-    const box = q('#ncta'); if (pago !== 'SPEI') { box.innerHTML = ''; return; }
+    const box = q('#ncta'); if (ed || pago !== 'SPEI') { box.innerHTML = ''; return; }
     const { coinc, l } = ctas(); const lista = coinc.length ? coinc : l;
     if (!ctaSel && coinc.length === 1) ctaSel = String(coinc[0].id);
     box.innerHTML = `<label>Cuenta de depósito${coinc.length ? '' : ' <span class="mut">(sin cuentas registradas para este beneficiario)</span>'}</label>
@@ -681,7 +698,7 @@ async function abreCapturaCancun() {
     q('#ncs').onchange = e => { ctaSel = e.target.value; pintaCta(); };
   };
   q('#nb').oninput = () => { ctaSel = ''; pintaCta(); };
-  q('#np').querySelectorAll('button').forEach(b => b.onclick = () => { pago = b.dataset.p; q('#np').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); pintaCta(); });
+  if (q('#np')) q('#np').querySelectorAll('button').forEach(b => b.onclick = () => { pago = b.dataset.p; q('#np').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); pintaCta(); });
   const monto = () => parseFloat(q('#nm').value) || 0;
   const reparte = () => {
     const sel = propias.filter(v => st.rep[v] && st.rep[v].on); const m = monto();
@@ -699,6 +716,13 @@ async function abreCapturaCancun() {
   q('#nv').onchange = pintaRep;
   q('#nm').oninput = () => { Object.values(st.rep).forEach(r => r.man = false); reparte(); if (q('#nv').value === 'VARIAS / COMPARTIDO') pintaRep(); };
   pintaCta();
+  if (ed) {
+    q('#nf').value = ed.fecha; q('#nb').value = ed.concepto || ''; q('#nm').value = ed.monto; q('#nco').value = ed.comentarios || '';
+    q('#nc').value = ed.categoria || '';
+    if (![...q('#nv').options].some(o => o.value === ed.villa || o.text === ed.villa)) { const o = document.createElement('option'); o.textContent = ed.villa; q('#nv').appendChild(o); }
+    q('#nv').value = ed.villa;
+    if (ed.villa === 'VARIAS / COMPARTIDO') { (S.repCn[ed.id] || []).forEach(x => { st.rep[x.villa] = { on: true, m: x.monto, man: true }; }); pintaRep(); }
+  }
   q('#ngo').onclick = async () => {
     const res = q('#nres'), err = t => res.innerHTML = `<div class="msg err">${esc(t)}</div>`;
     const ben = q('#nb').value.trim(), cat = q('#nc').value, villa = q('#nv').value, fecha = q('#nf').value, m = monto();
@@ -711,13 +735,18 @@ async function abreCapturaCancun() {
     }
     const b = q('#ngo'); b.disabled = true;
     let cuentaId = null;
-    if (pago === 'SPEI') {
+    if (!ed && pago === 'SPEI') {
       if (!ctaSel) { b.disabled = false; return err('Se requiere seleccionar la cuenta de depósito.'); }
       if (ctaSel === 'NEW') {
         const r = await sb.rpc('cancun_cuenta_guardar', { p_beneficiario: ben, p_banco: q('#nnb').value, p_cuenta: q('#nnc').value, p_nota: q('#nnn').value });
         if (r.error) { b.disabled = false; return err(r.error.message); }
         cuentaId = r.data.id;
       } else cuentaId = +ctaSel;
+    }
+    if (ed) {
+      const r2 = await sb.rpc('cancun_folio_editar', { p_id: ed.id, p: { fecha, concepto: ben, categoria: cat, monto: m, villa, comentarios: q('#nco').value, reparto } });
+      b.disabled = false; if (r2.error) return err(r2.error.message);
+      await cargar(); w.remove(); vCancun(); return;
     }
     const { data, error } = await sb.rpc('cancun_folio_capturar', { p: { fecha, concepto: ben, categoria: cat, pago, monto: m, villa, comentarios: q('#nco').value, cuenta_id: cuentaId, reparto } });
     b.disabled = false; if (error) return err(error.message);
@@ -804,8 +833,8 @@ function vIngresos() {
   const tot = rows.reduce((s, r) => s + Number(r.monto), 0);
   $('#m').innerHTML = `${chipsIng()}${filtrosHTML(true, false, { sinUnidades: true, sinCancun: true })}
   <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> ingresos · <b class="pos">${money(tot)}</b></div><div class="row" style="gap:8px">${puedeCapturar() ? '<button class="btn gold" id="bning">Nuevo ingreso</button>' : ''}${(puedeCapturar() || puedeImpPl()) ? '<button class="btn sec" id="bimpg">Importar archivo de pagos</button>' : ''}${puedeCapturar() ? '<button class="btn sec" id="bimpx">Importar Excel</button>' : ''}<button class="btn sec" id="xl">Descargar Excel</button><button class="btn sec" id="pdf">Descargar PDF</button></div></div>
-  <div class="tw"><table><thead><tr>${S.unidad ? '' : '<th>Unidad</th>'}<th>Fecha</th><th>Cargo</th><th>Cliente</th><th class="n">Monto</th>${esAdmin() ? '<th></th>' : ''}</tr></thead><tbody>
-  ${rows.map(r => `<tr>${S.unidad ? '' : `<td>${nomU(r.unidad)}</td>`}<td>${r.fecha.split('-').reverse().join('/')}</td><td>${CARGOS[r.cargo_id]}</td><td class="wrap">${esc(r.concepto)}</td><td class="n">${money(r.monto)}</td>${esAdmin() ? `<td><a href="#" data-an="${r.id}" class="mut">Anular</a></td>` : ''}</tr>`).join('')}
+  <div class="tw"><table><thead><tr>${S.unidad ? '' : '<th>Unidad</th>'}<th>Fecha</th><th>Cargo</th><th>Cliente</th><th class="n">Monto</th>${puedeEdFol() ? '<th></th>' : ''}</tr></thead><tbody>
+  ${rows.map(r => `<tr>${S.unidad ? '' : `<td>${nomU(r.unidad)}</td>`}<td>${r.fecha.split('-').reverse().join('/')}</td><td>${CARGOS[r.cargo_id]}</td><td class="wrap">${esc(r.concepto)}</td><td class="n">${money(r.monto)}</td>${puedeEdFol() ? `<td><a href="#" data-an="${r.id}" class="mut">Cancelar</a></td>` : ''}</tr>`).join('')}
   </tbody></table></div>`;
   ligaFiltros(vIngresos);
   ligaChipsIng();
@@ -821,7 +850,7 @@ function vIngresos() {
     bajarPDF(nomI + '.pdf', 'Ingresos (' + rows.length + ')', txtFiltros(), cols, filas, cols.map((c, i) => i === cols.length - 2 ? 'TOTAL' : i === cols.length - 1 ? money(tot) : ''));
   };
   document.querySelectorAll('[data-an]').forEach(a => a.onclick = async e => {
-    e.preventDefault(); const nota = prompt('Motivo de anulación del ingreso (el registro se conserva):'); if (!nota) return;
+    e.preventDefault(); const nota = prompt('Motivo de la cancelación del ingreso (el registro se conserva):'); if (!nota) return;
     const { error } = await sb.rpc('platon_anular', { p_id: +a.dataset.an, p_nota: nota }); if (error) return alert(error.message);
     await cargar(); vIngresos();
   });
