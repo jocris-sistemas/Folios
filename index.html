@@ -99,7 +99,7 @@ const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const money = n => (n < 0 ? '-' : '') + '$' + Math.abs(Number(n) || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
-const CARGOS = {}, CARGO_ID = {};
+const CARGOS = {}, CARGO_ID = {}, RESP = {};
 const limpia = n => String(n || '').replace(/^ING\.\s*/i, '').trim().toUpperCase();
 const S = { arch: {}, acum: [], cancun: [], cn: { sub: 'EFECTIVO', tipo: 'EGRESO', mes: '', q: '', villa: '' }, ac: { semana: '', cargo: 0, q: '', desde: '', sel: {} }, det: null, unidad: '', perfil: null, rows: [], cruce: {}, tab: 'folios', cargo: 0, mes: '', q: '', anio: 2026, imp: null };
 const puedeCapturar = () => S.perfil && ['administrador', 'capturista'].includes(S.perfil.rol);
@@ -114,7 +114,8 @@ const veAcumulado = () => false;
 /* ---------- datos ---------- */
 async function cargar() {
   try { const { data: cu } = await sb.from('cargos_unidad').select('cargo_id,unidad'); S.cu = {}; (cu || []).forEach(x => S.cu[x.cargo_id] = x.unidad); } catch (e) { S.cu = {}; }
-  const { data: cg } = await sb.from('cargos').select('id,nombre,activo,solo_caja').order('id');
+  const { data: cg } = await sb.from('cargos').select('id,nombre,activo,solo_caja,responsable').order('id');
+  (cg || []).forEach(c => { if (c.responsable) RESP[c.id] = c.responsable; });
   (cg || []).filter(c => c.activo && (!c.solo_caja || (S.cu || {})[c.id])).forEach(c => { CARGOS[c.id] = limpia(c.nombre); CARGO_ID[limpia(c.nombre)] = c.id; });
   S.chq = []; if (!soloFolios()) { try { const { data: ch } = await sb.from('chequeras').select('id,nombre,activa').eq('activa', true).order('nombre'); S.chq = ch || []; } catch (e) { } }
   let all = [], from = 0;
@@ -429,18 +430,20 @@ function vFolios() {
   <input type="date" id="ffd" value="${FF.d}" title="Desde"><input type="date" id="ffh" value="${FF.h}" title="Hasta"><button class="btn sec" id="ffl">Limpiar filtros</button></div>
   <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> folios · <b>${money(tot)}</b>${soloFolios() ? '' : ` · <span class="mut">${conCh} con cheque, ${conEf} en efectivo, ${rows.length - conCh - conEf} sin asignar</span>`}</div>
   <div class="row" style="gap:8px">${puedeLigar() && Object.keys(S.lg).filter(k => S.lg[k]).length === 1 ? '<span class="mut">1 folio seleccionado. La selección se conserva al cambiar de cargo.</span>' : ''}${puedeLigar() && Object.keys(S.lg).filter(k => S.lg[k]).length >= 2 ? `<button class="btn gold" id="blig">Ligar seleccionados (${Object.keys(S.lg).filter(k => S.lg[k]).length})</button>` : ''}${(puedeCapturar() || soloFolios()) ? '<button class="btn gold" id="bcap">Nuevo folio</button><button class="btn sec" id="bfoto">Subir foto o archivo</button>' : ''}${(puedeCapturar() || puedeImpPl()) ? '<button class="btn sec" id="bimp">Importar Excel</button>' : ''}<button class="btn sec" id="xl">Descargar Excel</button><button class="btn sec" id="pdf">Descargar PDF</button></div></div>
-  ${FF.g ? resumenGrupo(FF.g) : ''}<div class="tw"><table><thead><tr>${puedeLigar() ? '<th></th>' : ''}${S.unidad ? '' : '<th>Unidad</th>'}<th>Cargo</th><th class="n">Folio</th><th>Fecha</th><th>Concepto</th><th class="n">Monto</th>${soloFolios() ? '' : '<th class="n">Total a pagar</th><th>Pago</th>'}${soloFolios() ? '' : '<th>Archivo</th><th>Estado</th>'}${puedeEdFol() ? '<th></th>' : ''}</tr></thead><tbody>
+  ${FF.g ? resumenGrupo(FF.g) : ''}<div class="tw"><table><thead><tr>${puedeLigar() ? '<th></th>' : ''}${S.unidad ? '' : '<th>Unidad</th>'}<th>Cargo</th><th class="n">Folio</th><th>Fecha</th><th>Concepto</th><th class="n">Monto</th>${soloFolios() ? '' : '<th class="n">Total a pagar</th><th>Pago</th>'}${soloFolios() ? '' : '<th>Archivo</th><th>Estado</th>'}<th>Impresión</th>${puedeEdFol() ? '<th></th>' : ''}</tr></thead><tbody>
   ${rows.map(r => { const ch = S.cruce[r.cargo_id + '-' + r.folio]; return `<tr data-d="${r.id}" style="cursor:pointer">${puedeLigar() ? `<td><input type="checkbox" data-lg="${r.id}" style="width:auto" ${S.lg[r.id] ? 'checked' : ''}></td>` : ''}${S.unidad ? '' : `<td>${nomU(r.unidad)}</td>`}<td>${CARGOS[r.cargo_id]}</td><td class="n folio">${r.folio}</td><td>${r.fecha.split('-').reverse().join('/')}</td><td class="wrap">${esc(r.concepto)}</td><td class="n">${money(r.monto)}</td>
   ${soloFolios() ? '' : `<td class="n">${money(r.total_pagar != null ? r.total_pagar : r.monto)}${r.sin_factura ? ` <span class="badge b-bad" title="Sin factura">+${Number(r.pct_extra)}%</span>` : ''}</td>
   <td>${S.fp && S.fp[r.id] ? pagoBadgeFp(S.fp[r.id], S.sug[r.id]) : ch ? `<span class="badge b-ok">Cheque ${esc(ch)}</span>` : (S.medio || {})[r.id] ? `<span class="badge b-ok" title="${esc(S.medio[r.id].referencia || '')}">${S.medio[r.id].medio === 'EFECTIVO' ? 'Efectivo' : esc(S.medio[r.id].medio)}</span>` : '<span class="badge b-no">Sin asignar</span>'}</td>`}
-  ${soloFolios() ? '' : `<td>${archBadge(r)}</td><td>${estadoBadge(r)}${r.grupo_id ? ` <a href="#" class="badge b-no" data-g="${r.grupo_id}" title="Folios ligados: ver el grupo">Grupo ${r.grupo_id}</a>` : ''}</td>`}${puedeEdFol() ? `<td><a href="#" data-an="${r.id}" class="mut">Cancelar</a></td>` : ''}</tr>`; }).join('')}
+  ${soloFolios() ? '' : `<td>${archBadge(r)}</td><td>${estadoBadge(r)}${r.grupo_id ? ` <a href="#" class="badge b-no" data-g="${r.grupo_id}" title="Folios ligados: ver el grupo">Grupo ${r.grupo_id}</a>` : ''}</td>`}<td style="white-space:nowrap">${!soloFolios() || r.creado_por === S.perfil.id ? `<button class="btn sec" data-pi="${r.id}">Imprimir</button> <button class="btn ghost" data-pf="${r.id}">Subir firmado</button>` : ''}</td>${puedeEdFol() ? `<td><a href="#" data-an="${r.id}" class="mut">Cancelar</a></td>` : ''}</tr>`; }).join('')}
   </tbody></table></div>`;
   ligaFiltros(vFolios);
   { const b1 = $('#bcap'), b2 = $('#bfoto'), b3 = $('#bimp');
     if (b1) b1.onclick = () => { preparaCap('EGRESO'); abreSub('folios', 'capturar'); };
     if (b2) b2.onclick = () => { preparaCap('EGRESO'); abreSub('folios', 'capturar'); const fi = $('#fotoin'); if (fi) fi.click(); };
     if (b3) b3.onclick = () => { S.impSub = ''; abreSub('folios', 'importar'); } }
-  document.querySelectorAll('tr[data-d]').forEach(t => t.onclick = e => { if (e.target.closest('[data-an],[data-lg],[data-g]')) return; abreDetalle(+t.dataset.d); });
+  document.querySelectorAll('tr[data-d]').forEach(t => t.onclick = e => { if (e.target.closest('[data-an],[data-lg],[data-g],[data-pi],[data-pf]')) return; abreDetalle(+t.dataset.d); });
+  document.querySelectorAll('[data-pi]').forEach(b => b.onclick = async () => { b.disabled = true; try { await imprimeFolio(+b.dataset.pi); await cargar(); vFolios(); } catch (e) { alert(e.message || e); b.disabled = false; } });
+  document.querySelectorAll('[data-pf]').forEach(b => b.onclick = () => { const id = +b.dataset.pf, i = document.createElement('input'); i.type = 'file'; i.accept = 'application/pdf,image/*'; i.onchange = async () => { const f = i.files[0]; if (!f) return; b.disabled = true; try { await subeFirmadoHoja(id, f); await cargar(); vFolios(); } catch (er) { alert(er.message || er); b.disabled = false; } }; i.click(); });
   document.querySelectorAll('[data-lg]').forEach(c => c.onchange = () => { S.lg[c.dataset.lg] = c.checked; vFolios(); });
   document.querySelectorAll('[data-g]').forEach(a => a.onclick = e => { e.preventDefault(); FF.g = +a.dataset.g; vFolios(); });
   { const bq = $('#gq'); if (bq) bq.onclick = e => { e.preventDefault(); FF.g = 0; vFolios(); }; }
@@ -500,6 +503,7 @@ function abreDetalle(id) {
   const r = S.rows.find(x => x.id === id); if (!r) return;
   S.det = id; const prev = document.getElementById('dlg'); if (prev) prev.remove();
   const ed = editable(r), a = S.arch[id] || {}, esPl = r.unidad === 'PLATON' && r.tipo === 'EGRESO';
+  const esEg = r.tipo === 'EGRESO' && (r.unidad === 'PLATON' || !soloFolios()), puedeImp = ed || (!soloFolios() && puedeCapturar());
   const rev = !soloFolios() && esPl && puedeCapturar();
   const lim = soloFolios() && r.creado_por === S.perfil.id && !r.revisado_en ? venceMs(r) : 0;
   const archs = ['ORIGINAL', 'GENERADO', 'FIRMADO'].filter(t => a[t]).map(t => `<div class="row" style="justify-content:space-between;margin:4px 0"><span>${{ ORIGINAL: 'Folio adjunto', GENERADO: 'Folio generado', FIRMADO: 'Folio firmado' }[t]} <span class="mut">· ${esc(a[t].nombre || '')}</span></span><button class="btn sec" data-v="${esc(a[t].path)}">Ver</button></div>`).join('') || '<div class="mut">Sin archivos.</div>';
@@ -522,9 +526,9 @@ function abreDetalle(id) {
   ${r.grupo_id ? `<h3 style="margin:16px 0 4px;font-size:15px">Folios ligados · Grupo ${r.grupo_id}</h3>${(() => { const m = miembrosGrupo(r.grupo_id), tot = m.reduce((s, x) => s + Number(x.monto), 0) || 1; return m.map(x => `<div class="row" style="justify-content:space-between;margin:4px 0"><span>${x.id === r.id ? '<b>' : ''}${esc(CARGOS[x.cargo_id] || '')} · folio ${x.folio} · ${money(x.monto)} (${(Number(x.monto) * 100 / tot).toFixed(1)}%)${x.id === r.id ? '</b>' : ''}<span class="mut"> · ${esc(x.concepto)}</span></span>${x.id === r.id ? '' : `<button class="btn sec" data-ver="${x.id}">Ver</button>`}</div>`).join('') + `<div class="mut">Total del grupo: ${money(tot)}</div>` + (puedeLigar() ? `<div style="margin-top:6px"><button class="btn sec" id="ddes">Quitar este folio del grupo</button> <button class="btn sec" id="dgrp">Ver el grupo en la lista</button></div>` : ''); })()}` : ''}
   <h3 style="margin:16px 0 4px;font-size:15px">Archivos</h3>${archs}
   <div class="row" style="margin-top:8px">
-    ${ed && esPl ? `<button class="btn sec" id="dga">Adjuntar folio (PDF o imagen)</button><input type="file" id="dfa" accept="application/pdf,image/*" style="display:none">` : ''}
-    ${ed && esPl ? `<button class="btn sec" id="dgen">Generar folio para firma</button>` : ''}
-    ${esPl && (a.GENERADO || a.ORIGINAL || ed) ? `<button class="btn gold" id="dgf">Subir folio firmado</button><input type="file" id="dff" accept="application/pdf,image/*" style="display:none">` : ''}
+    ${puedeImp && esEg ? `<button class="btn sec" id="dga">Adjuntar folio (PDF o imagen)</button><input type="file" id="dfa" accept="application/pdf,image/*" style="display:none">` : ''}
+    ${puedeImp && esEg ? `<button class="btn sec" id="dgen">Imprimir folio para firma</button>` : ''}
+    ${esEg && (a.GENERADO || a.ORIGINAL || puedeImp) ? `<button class="btn gold" id="dgf">Subir folio firmado (reemplaza el generado)</button><input type="file" id="dff" accept="application/pdf,image/*" style="display:none">` : ''}
   </div>
   ${rev ? `<h3 style="margin:16px 0 4px;font-size:15px">Revisión</h3><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="rsf" style="width:auto" ${r.sin_factura ? 'checked' : ''}> Aplicar %CARGO (pago sin factura)</label>
     <label>%CARGO</label><input id="rp" type="number" step="0.001" min="0" max="100" inputmode="decimal" value="${Number(r.pct_extra) || 0}" ${r.sin_factura ? '' : 'disabled'}>
@@ -543,7 +547,7 @@ function abreDetalle(id) {
     if (error) return msg(error.message); await refresca(); $('#dmsg').innerHTML = '<div class="msg ok">Pago confirmado.</div>';
   });
   const refresca = async () => { await cargar(); const y = window.scrollY; const keep = S.det; shell(); window.scrollTo(0, y); S.det = keep; abreDetalle(keep); };
-  const subir = async (tipo, file) => { try { msg('Cargando archivo…', 'info'); await subeArchivo(id, tipo, file); await refresca(); $('#dmsg').innerHTML = '<div class="msg ok">Archivo guardado.</div>'; } catch (e) { msg(e.message || String(e)); } };
+  const subir = async (tipo, file) => { try { msg('Cargando archivo…', 'info'); const dest = (tipo === 'FIRMADO' || tipo === 'GENERADO') && r.hoja_id ? S.rows.filter(x => x.hoja_id === r.hoja_id) : [r]; for (const x of dest) await subeArchivo(x.id, tipo, file); await refresca(); $('#dmsg').innerHTML = '<div class="msg ok">Archivo guardado.</div>'; } catch (e) { msg(e.message || String(e)); } };
   if ($('#dg')) $('#dg').onclick = async () => {
     const { error } = await sb.rpc('folios_editar', { p_id: id, p_fecha: $('#df').value, p_concepto: $('#dc').value, p_monto: parseFloat($('#dm').value) });
     if (error) return msg(error.message); await refresca(); $('#dmsg').innerHTML = '<div class="msg ok">Cambios guardados.</div>';
@@ -666,8 +670,8 @@ function vCancun() {
   <select id="cm"><option value="">Todo el año</option>${meses}</select><select id="cv"><option value="">Todas las villas</option>${villas.map(v => `<option ${C.villa === v ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>
   <input id="cq" placeholder="Buscar concepto, villa o folio…" value="${esc(C.q)}">${puedeEdFol() && base.some(esCanc) ? `<label class="mut" style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><input type="checkbox" id="cvc" ${S.cnVerCanc ? 'checked' : ''}>Ver cancelados</label>` : ''}</div>
   <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> registros · <b>${money(tot)}</b>${pendT ? ` <span class="mut">(sin incluir ${money(pendT)} pendiente de pago)</span>` : ''}</div><div class="row"><button class="btn gold" id="cnew">${S.cnIng ? 'Importar pagos' : 'Nuevo folio'}</button><button class="btn sec" id="cpi">Imprimir seleccionados (0)</button><button class="btn sec" id="cx">Descargar Excel</button></div></div>
-  <div class="tw"><table><thead><tr><th><input type="checkbox" id="cka" title="Seleccionar todos"></th><th>Fecha</th><th>Folio</th><th>Cargo</th><th>Concepto</th><th>Categoría</th><th>Villa</th><th class="n">Monto</th><th>Pago y semana</th><th></th></tr></thead><tbody>
-  ${rows.map(r => `<tr${esCanc(r) ? ' style="opacity:.6;text-decoration:line-through"' : ''}><td>${r.tipo === 'EGRESO' && !esCanc(r) ? `<input type="checkbox" class="ckf" data-i="${esc(r.id)}" ${S.cnSel[r.id] ? 'checked' : ''}>` : ''}</td><td>${fFecha(r.fecha || '')}</td><td class="folio">${esc(r.folio || '')}</td><td>${esc(r.cargo || '')}</td><td class="wrap">${esc(r.concepto || '')}</td><td>${esc(r.categoria || '')}</td><td>${esc(r.villa || '')}${(S.repCn || {})[r.id] ? '<div class="mut" style="font-size:11px;white-space:normal;max-width:380px">' + S.repCn[r.id].map(x => esc(x.villa) + ' ' + money(x.monto)).join(' · ') + '</div>' : ''}</td><td class="n">${money(r.monto)}</td><td>${esCanc(r) ? `<span class="badge b-no" title="${esc(r.pagado_nota)}">Cancelado</span>` : r.pagado === false ? '<span class="badge b-bad">Pendiente de pago</span>' : (S.fpc && S.fpc[r.id] ? pagoBadgeFp(S.fpc[r.id]) : '')}</td><td>${r.tipo === 'EGRESO' && !esCanc(r) ? `<button class="btn sec pim" data-i="${esc(r.id)}">Imprimir</button>` : ''}${puedeEdFol() ? (esCanc(r) ? ` <button class="btn ghost rac" data-i="${esc(r.id)}">Reactivar</button>` : `${r.tipo === 'EGRESO' ? ` <button class="btn ghost edc" data-i="${esc(r.id)}">Editar</button>` : ''} <button class="btn ghost cac" data-i="${esc(r.id)}">Cancelar</button>`) : ''}</td></tr>`).join('') || '<tr><td colspan="10" class="mut">Sin registros con los filtros seleccionados.</td></tr>'}
+  <div class="tw"><table><thead><tr><th><input type="checkbox" id="cka" title="Seleccionar todos"></th><th>Fecha</th>${C.tipo === 'INGRESO' ? '' : '<th>Folio</th>'}<th>Cargo</th><th>Concepto</th><th>Categoría</th><th>Villa</th><th class="n">Monto</th><th>Pago y semana</th><th></th></tr></thead><tbody>
+  ${rows.map(r => `<tr${esCanc(r) ? ' style="opacity:.6;text-decoration:line-through"' : ''}><td>${r.tipo === 'EGRESO' && !esCanc(r) ? `<input type="checkbox" class="ckf" data-i="${esc(r.id)}" ${S.cnSel[r.id] ? 'checked' : ''}>` : ''}</td><td>${fFecha(r.fecha || '')}</td>${C.tipo === 'INGRESO' ? '' : `<td class="folio">${esc(r.folio || '')}</td>`}<td>${esc(r.cargo || '')}</td><td class="wrap">${esc(r.concepto || '')}</td><td>${esc(r.categoria || '')}</td><td>${esc(r.villa || '')}${(S.repCn || {})[r.id] ? '<div class="mut" style="font-size:11px;white-space:normal;max-width:380px">' + S.repCn[r.id].map(x => esc(x.villa) + ' ' + money(x.monto)).join(' · ') + '</div>' : ''}</td><td class="n">${money(r.monto)}</td><td>${esCanc(r) ? `<span class="badge b-no" title="${esc(r.pagado_nota)}">Cancelado</span>` : r.pagado === false ? '<span class="badge b-bad">Pendiente de pago</span>' : (S.fpc && S.fpc[r.id] ? pagoBadgeFp(S.fpc[r.id]) : '')}</td><td>${r.tipo === 'EGRESO' && !esCanc(r) ? `<button class="btn sec pim" data-i="${esc(r.id)}">Imprimir</button>` : ''}${puedeEdFol() ? (esCanc(r) ? ` <button class="btn ghost rac" data-i="${esc(r.id)}">Reactivar</button>` : `${r.tipo === 'EGRESO' ? ` <button class="btn ghost edc" data-i="${esc(r.id)}">Editar</button>` : ''} <button class="btn ghost cac" data-i="${esc(r.id)}">Cancelar</button>`) : ''}</td></tr>`).join('') || '<tr><td colspan="10" class="mut">Sin registros con los filtros seleccionados.</td></tr>'}
   <tr class="tot"><td colspan="7">TOTAL</td><td class="n">${money(tot)}</td><td></td><td></td></tr></tbody></table></div>`;
   { const ds = $('#dsrv'); if (ds) ds.ontoggle = () => { S.srvAbierto = ds.open; }; }
   document.querySelectorAll('#cs button').forEach(b => b.onclick = () => { C.sub = b.dataset.s; vCancun(); });
@@ -1040,6 +1044,17 @@ function vCapturarFolio() {
     $('#pdfn').onclick = async () => { try { descarga(await folioHoja(S.ultimaHoja.map(id => S.rows.find(r => r.id === id)).filter(Boolean)), 'Folio_' + data.map(x => (CARGOS[x.cargo_id] || x.cargo_id) + '_' + x.folio).join('_') + '.pdf'); } catch (e) { $('#res').innerHTML += `<div class="msg err">${esc(e.message || e)}</div>`; } };
   };
 }
+const hojaDe = r => r.hoja_id ? S.rows.filter(x => x.hoja_id === r.hoja_id && x.tipo === 'EGRESO').sort((a, b) => a.id - b.id) : [r];
+async function imprimeFolio(id) {
+  const r = S.rows.find(x => x.id === id); if (!r) return;
+  const hoja = hojaDe(r), blob = await folioHoja(hoja), nombre = `Folio_${hoja.map(x => (CARGOS[x.cargo_id] || x.cargo_id) + '_' + x.folio).join('_')}.pdf`;
+  descarga(blob, nombre);
+  for (const x of hoja) { const a = S.arch[x.id] || {}; if (!a.GENERADO && !a.FIRMADO) { try { await subeArchivo(x.id, 'GENERADO', new File([blob], nombre, { type: 'application/pdf' })); } catch (e) { } } }
+}
+async function subeFirmadoHoja(id, file) {
+  const r = S.rows.find(x => x.id === id); if (!r) return;
+  for (const x of hojaDe(r)) await subeArchivo(x.id, 'FIRMADO', file);
+}
 const descarga = (blob, nombre) => { const url = URL.createObjectURL(blob), l = document.createElement('a'); l.href = url; l.download = nombre; l.click(); setTimeout(() => URL.revokeObjectURL(url), 4000); };
 async function firmaDe(uid) {
   S.firmas = S.firmas || {};
@@ -1069,7 +1084,7 @@ async function cajaFolio(d, r, y0, h, W) {
   txt(lineaPago, x0 + w / 2, T(4.9) + 9 + 0, { align: 'center' }, 9);
   txt(r.nombre || '', x0 + w / 2, T(6.85), { align: 'center' }, 11, 1);
   d.line(x0, T(7.3), x0 + w, T(7.3));
-  const hy = T(9.5), tb = T(20.4); d.line(x0, hy, x0 + w, hy);
+  const hy = T(9.5), tb = T(17.2); d.line(x0, hy, x0 + w, hy);
   [1, 2, 3].forEach(k => d.line(xs[k], hy, xs[k], tb));
   txt('Vencimiento', (xs[0] + xs[1]) / 2, hy - u * 1.0 + 3, { align: 'center' }, 10);
   txt('Número', (xs[1] + xs[2]) / 2, hy - u * 1.3 + 3, { align: 'center' }, 10); txt('de folio', (xs[1] + xs[2]) / 2, hy - u * .6 + 3, { align: 'center' }, 10);
@@ -1086,10 +1101,14 @@ async function cajaFolio(d, r, y0, h, W) {
   txt('%CARGO' + (pct ? ' ' + pct + '%' : ''), xs[3] - 8, fila(rows - 2), { align: 'right' }, 9); txt(money(Number(r.monto) * pct / 100), xs[4] - 8, fila(rows - 2), { align: 'right' }, 9);
   txt('TOTAL', xs[3] - 8, fila(rows - 1), { align: 'right' }, 10, 1); txt(money(tot), xs[4] - 8, fila(rows - 1), { align: 'right' }, 10, 1);
   d.line(x0, tb, x0 + w, tb);
-  const by = y0 + h - .9 * u;
+  const by = T(19.8);
   txt('SOLICITO: ' + (fu.nombre || ''), x0 + 8, by, {}, 10);
-  if (fu.firma) { try { d.addImage(fu.firma, 'PNG', x0 + 60, by - 9 - 30, 95, 30); } catch (e) { } }
+  if (fu.firma) { try { d.addImage(fu.firma, 'PNG', x0 + 70, tb + 2, 75, 25); } catch (e) { } }
   txt('AUTORIZO: ING. CRISTOBAL', x0 + w - 14, by, { align: 'right' }, 10);
+  const bw = 230, bx = x0 + (w - bw) / 2;
+  d.rect(bx, T(20.4), bw, T(22.8) - T(20.4));
+  d.setTextColor(120); txt('FIRMA', bx + 4, T(20.4) + 8, {}, 6.5); d.setTextColor(0);
+  txt(RESP[r.cargo_id] || CARGOS[r.cargo_id] || '', x0 + w / 2, T(23.55), { align: 'center' }, 9, 1);
 }
 /* ---------- Mi firma ---------- */
 function abreFirma() {
