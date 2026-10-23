@@ -551,7 +551,7 @@ function abreDetalle(id) {
   d.querySelectorAll('[data-vs]').forEach(b => b.onclick = () => { S.ac.semana = b.dataset.vs; S.ac.desde = ''; cierraDetalle(); S.tab = 'acumulado'; shell(); });
   d.querySelectorAll('[data-cf]').forEach(b => b.onclick = async () => {
     const sg = (S.sug[id] || [])[+b.dataset.cf]; if (!sg) return;
-    if (!confirm('Confirmar: ' + sg.referencia + ' (' + fFecha(sg.fecha_ref) + ') para el folio ' + r.folio + '?')) return;
+    if (!confirm('¿Confirmar la referencia ' + sg.referencia + ' (' + fFecha(sg.fecha_ref) + ') para el folio ' + r.folio + '?')) return;
     const { error } = await sb.rpc('folio_confirmar_pago', { p_mov: id, p_medio: sg.tipo_sugerido, p_referencia: sg.referencia, p_fecha: sg.fecha_ref });
     if (error) return msg(error.message); await refresca(); $('#dmsg').innerHTML = '<div class="msg ok">Pago confirmado.</div>';
   });
@@ -930,7 +930,7 @@ function vAcumulado() {
   if ($('#aall')) $('#aall').onclick = () => { tope.forEach(r => A.sel[r.id] = true); vAcumulado(); };
   if ($('#areg')) $('#areg').onclick = async () => {
     const ids = sels(); if (!ids.length) return alert('Seleccionar al menos un folio.');
-    if (!confirm(`Registrar ${ids.length} folios por ${money(montoSel())} en la semana del ${fFecha(A.semana)}?`)) return;
+    if (!confirm(`¿Registrar ${ids.length} folios por ${money(montoSel())} en la semana del ${fFecha(A.semana)}?`)) return;
     const b = $('#areg'); b.disabled = true;
     const { error } = await sb.rpc('acumulado_registrar', { p_semana: A.semana, p_ids: ids, p_nota: null });
     if (error) { b.disabled = false; return alert(error.message); }
@@ -943,7 +943,7 @@ function vAcumulado() {
   document.querySelectorAll('[data-hx]').forEach(a => a.onclick = async e => {
     e.preventDefault(); const i = +a.dataset.hx, l = HL[i], L = HL.slice();
     if (l.k === 'm') {
-      if (!confirm('Quitar el folio de esta semana? El registro se conserva como inactivo.')) return;
+      if (!confirm('¿Quitar el folio de esta semana? El registro se conserva como inactivo.')) return;
       const { error } = await sb.rpc('acumulado_quitar', { p_mov: l.id }); if (error) return alert(error.message);
       L.splice(i, 1); try { await hojaGuarda(A.semana, L); } catch (er) { } await cargar(); return vAcumulado();
     }
@@ -1187,7 +1187,7 @@ async function cajaFolio(d, r, y0, h, W) {
   [1, 2, 3].forEach(k => d.line(xs[k], hy, xs[k], tb));
   txt('Vencimiento', (xs[0] + xs[1]) / 2, hy - u * 1.0 + 3, { align: 'center' }, 10);
   txt('Número', (xs[1] + xs[2]) / 2, hy - u * 1.3 + 3, { align: 'center' }, 10); txt('de folio', (xs[1] + xs[2]) / 2, hy - u * .6 + 3, { align: 'center' }, 10);
-  txt(r.unidad || '', (xs[2] + xs[3]) / 2, hy - u * .95 + 3, { align: 'center' }, 10); txt('Monto', (xs[3] + xs[4]) / 2, hy - u * .95 + 3, { align: 'center' }, 10);
+  txt('Monto', (xs[3] + xs[4]) / 2, hy - u * .95 + 3, { align: 'center' }, 10);
   const alto = tb - hy, rows = Math.floor(alto / (u * .95)), step = alto / rows;
   d.setLineDashPattern([1, 2], 0); for (let i = 1; i < rows; i++) d.line(x0, hy + i * step, x0 + w, hy + i * step); d.setLineDashPattern([], 0);
   const fila = i => hy + i * step + step * .7, cx = (xs[2] + xs[3]) / 2;
