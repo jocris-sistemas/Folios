@@ -54,6 +54,7 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 td.wrap{white-space:normal;min-width:180px}
 tr.tot td{font-weight:800;background:var(--chip)}
 .badge{display:inline-block;padding:2px 8px;border-radius:99px;font-size:12px;font-weight:700}
+.nb{display:inline-block;background:#c0392b;color:#fff;border-radius:99px;font-size:11px;font-weight:700;padding:1px 7px;margin-left:6px;vertical-align:middle}
 .b-ok{background:var(--okbg);color:var(--ok)}.b-no{background:var(--chip);color:var(--mut)}.b-bad{background:var(--badbg);color:var(--bad)}
 .folio{font-weight:800;color:var(--pri)}
 .msg{padding:10px 12px;border-radius:10px;margin:10px 0;font-weight:600}
@@ -247,13 +248,14 @@ async function boot() {
 }
 
 /* ---------- estructura ---------- */
+const pendRev = () => soloFolios() ? [] : S.rows.filter(r => r.tipo === 'EGRESO' && r.unidad === 'PLATON' && !r.revisado_en && !esPasado(r));
 function shell() {
   const tabs = soloFolios() ? [['folios', 'Mis folios'], ...(puedeImpPl() ? [['ingresos', 'Ingresos']] : [])] : [['folios', 'Folios'], ['ingresos', 'Ingresos']];
   if (veCancun()) tabs.push(['cancun', 'Cancún']);
   if (veAcumulado()) tabs.push(['acumulado', 'Acumulado semanal']);
   $('#app').innerHTML = `<header><div class="top"><h1>Folios<small>${soloFolios() ? 'Platón' : 'egresos e ingresos'}</small></h1>
     <div class="who">${esc(S.perfil.nombre || S.perfil.correo || '')}<br><a href="#" id="mfirma" style="color:#fff">Mi firma</a> · <a href="#" id="out" style="color:#fff">Cerrar sesión</a></div></div>
-    <nav>${tabs.map(t => `<button data-t="${t[0]}" class="${(S.padre || S.tab) === t[0] ? 'on' : ''}">${t[1]}</button>`).join('')}</nav></header>${bannerSrv()}${S.padre ? `<div style="padding:8px 12px"><button class="btn sec" id="atras">← Volver a ${S.padre === 'ingresos' ? 'Ingresos' : 'Folios'}</button></div>` : ''}<main id="m"></main>`;
+    <nav>${tabs.map(t => `<button data-t="${t[0]}" class="${(S.padre || S.tab) === t[0] ? 'on' : ''}">${t[1]}${t[0] === 'folios' && pendRev().length ? `<span class="nb" title="Folios de Platón pendientes de revisión">${pendRev().length}</span>` : ''}</button>`).join('')}</nav></header>${bannerSrv()}${S.padre ? `<div style="padding:8px 12px"><button class="btn sec" id="atras">← Volver a ${S.padre === 'ingresos' ? 'Ingresos' : 'Folios'}</button></div>` : ''}<main id="m"></main>`;
   document.querySelectorAll('nav button').forEach(b => b.onclick = () => { S.tab = b.dataset.t; S.padre = ''; shell(); });
   { const at = $('#atras'); if (at) at.onclick = () => { S.tab = S.padre; S.padre = ''; shell(); }; }
   { const bs = $('#bsrv'); if (bs) bs.onclick = () => { S.tab = 'cancun'; shell(); }; }
@@ -419,13 +421,15 @@ function vFolios() {
   fijaCargo();
   if (S.cargo === -1) return vCancun();
   const FF = S.ff = S.ff || { p: '', c: '', d: '', h: '' };
-  const todas = (FF.g ? miembrosGrupo(FF.g) : filtradas('EGRESO')).sort((a, b) => a.cargo_id - b.cargo_id || a.folio - b.folio);
+  const todas = (FF.g ? miembrosGrupo(FF.g) : filtradas('EGRESO').sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)) || b.id - a.id));
   const cats = [...new Set(todas.map(r => r.categoria || 'SIN CATEGORÍA'))].sort();
   S.lg = S.lg || {};
   const rows = todas.filter(r => (!FF.g || r.grupo_id === FF.g) && (!FF.p || pagoTipo(r) === FF.p) && (!FF.r || (FF.r === 'P' ? (!r.revisado_en && r.unidad === 'PLATON' && !esPasado(r)) : !!r.revisado_en)) && (!FF.c || (r.categoria || 'SIN CATEGORÍA') === FF.c) && (!FF.d || r.fecha >= FF.d) && (!FF.h || r.fecha <= FF.h));
   const tot = rows.reduce((s, r) => s + Number(r.monto), 0);
   const conCh = rows.filter(r => S.cruce[r.cargo_id + '-' + r.folio]).length, conEf = rows.filter(r => !S.cruce[r.cargo_id + '-' + r.folio] && (S.medio || {})[r.id]).length;
-  $('#m').innerHTML = `${filtrosHTML(true, true)}
+  const pr = pendRev(), prC = {}; pr.forEach(r => prC[r.cargo_id] = (prC[r.cargo_id] || 0) + 1);
+  const avisoPr = pr.length && FF.r !== 'P' ? `<div class="msg info" style="margin-bottom:8px"><b>${pr.length}</b> folio(s) de Platón por revisar. Ver por cargo: ${Object.keys(prC).map(c => `<a href="#" class="badge b-bad" data-pr="${c}">${esc(CARGOS[c] || c)} · ${prC[c]}</a>`).join(' ')}</div>` : '';
+  $('#m').innerHTML = `${avisoPr}${filtrosHTML(true, true)}
   <div class="sticky-f">${soloFolios() ? '' : `<select id="ffp"><option value="">Pago: todos</option>${[['CHEQUE', 'Con cheque'], ['EFECTIVO', 'En efectivo'], ['SIN', 'Sin asignar']].map(o => `<option value="${o[0]}" ${FF.p === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('')}</select><select id="ffr"><option value="">Revisión: todas</option><option value="P" ${FF.r === 'P' ? 'selected' : ''}>Pendientes de revisión</option><option value="R" ${FF.r === 'R' ? 'selected' : ''}>Revisados</option></select>`}
   <input type="date" id="ffd" value="${FF.d}" title="Desde"><input type="date" id="ffh" value="${FF.h}" title="Hasta"><button class="btn sec" id="ffl">Limpiar filtros</button></div>
   <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> folios · <b>${money(tot)}</b>${soloFolios() ? '' : ` · <span class="mut">${conCh} con cheque, ${conEf} en efectivo, ${rows.length - conCh - conEf} sin asignar</span>`}</div>
@@ -444,6 +448,7 @@ function vFolios() {
   document.querySelectorAll('tr[data-d]').forEach(t => t.onclick = e => { if (e.target.closest('[data-an],[data-lg],[data-g],[data-pi],[data-pf]')) return; abreDetalle(+t.dataset.d); });
   document.querySelectorAll('[data-pi]').forEach(b => b.onclick = async () => { b.disabled = true; try { await imprimeFolio(+b.dataset.pi); await cargar(); vFolios(); } catch (e) { alert(e.message || e); b.disabled = false; } });
   document.querySelectorAll('[data-pf]').forEach(b => b.onclick = () => { const id = +b.dataset.pf, i = document.createElement('input'); i.type = 'file'; i.accept = 'application/pdf,image/*'; i.onchange = async () => { const f = i.files[0]; if (!f) return; b.disabled = true; try { await subeFirmadoHoja(id, f); await cargar(); vFolios(); } catch (er) { alert(er.message || er); b.disabled = false; } }; i.click(); });
+  document.querySelectorAll('[data-pr]').forEach(a => a.onclick = e => { e.preventDefault(); S.unidad = 'PLATON'; S.cargo = +a.dataset.pr; S.mes = ''; S.q = ''; FF.r = 'P'; FF.p = ''; FF.c = ''; FF.d = ''; FF.h = ''; FF.g = 0; shell(); });
   document.querySelectorAll('[data-lg]').forEach(c => c.onchange = () => { S.lg[c.dataset.lg] = c.checked; vFolios(); });
   document.querySelectorAll('[data-g]').forEach(a => a.onclick = e => { e.preventDefault(); FF.g = +a.dataset.g; vFolios(); });
   { const bq = $('#gq'); if (bq) bq.onclick = e => { e.preventDefault(); FF.g = 0; vFolios(); }; }
@@ -516,12 +521,14 @@ function abreDetalle(id) {
   ${pagoDetalleHTML(r)}
   ${!soloFolios() && puedeCapturar() && r.tipo === 'EGRESO' ? `<h3 style="margin:16px 0 4px;font-size:15px">Datos de pago ${r.datos_completos === false ? '<span class="badge b-bad">Pendientes</span>' : ''}</h3>
     <label>Medio de pago</label><select id="pm"><option value="">Seleccionar…</option>${['EFECTIVO', 'TRANSFERENCIA', 'CHEQUE'].map(m => `<option ${r.medio_pago === m ? 'selected' : ''}>${m}</option>`).join('')}</select>
-    <label>Chequera</label><select id="pc"><option value="">—</option>${(S.chq || []).map(c => `<option value="${c.id}" ${r.chequera_id === c.id ? 'selected' : ''}>${esc(c.nombre)}</option>`).join('')}</select>
-    <label>Número de cheque</label><input id="pn" value="${esc(r.numero_cheque || '')}">
-    <label>Datos bancarios</label><input id="pb" inputmode="numeric" value="${esc(r.datos_bancarios || '')}">
-    <label>Periodo</label><input id="pp" value="${esc(r.periodo || '')}">
-    <label>Fecha de vencimiento</label><input id="pv" type="date" value="${r.vencimiento || ''}">
-    <label>Nombre</label><input id="pnm" value="${esc(r.nombre || '')}">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px">
+    <div id="pcw"><label>Chequera</label><select id="pc"><option value="">—</option>${(S.chq || []).map(c => `<option value="${c.id}" ${r.chequera_id === c.id ? 'selected' : ''}>${esc(c.nombre)}</option>`).join('')}</select></div>
+    <div id="pnw"><label>Número de cheque</label><input id="pn" value="${esc(r.numero_cheque || '')}"></div>
+    <div id="pbw" style="grid-column:1/-1"><label>Datos bancarios</label><input id="pb" inputmode="numeric" value="${esc(r.datos_bancarios || '')}"></div>
+    <div><label>Fecha de vencimiento</label><input id="pv" type="date" value="${r.vencimiento || ''}"></div>
+    <div><label>Periodo</label><input id="pp" value="${esc(r.periodo || '')}"></div>
+    <div style="grid-column:1/-1"><label>Nombre</label><input id="pnm" value="${esc(r.nombre || '')}"></div>
+    </div>
     <div class="row" style="margin-top:8px"><button class="btn" id="dpg">Guardar datos de pago</button><button class="btn sec" id="dpdf">Descargar PDF</button></div>` : ''}
   ${r.grupo_id ? `<h3 style="margin:16px 0 4px;font-size:15px">Folios ligados · Grupo ${r.grupo_id}</h3>${(() => { const m = miembrosGrupo(r.grupo_id), tot = m.reduce((s, x) => s + Number(x.monto), 0) || 1; return m.map(x => `<div class="row" style="justify-content:space-between;margin:4px 0"><span>${x.id === r.id ? '<b>' : ''}${esc(CARGOS[x.cargo_id] || '')} · folio ${x.folio} · ${money(x.monto)} (${(Number(x.monto) * 100 / tot).toFixed(1)}%)${x.id === r.id ? '</b>' : ''}<span class="mut"> · ${esc(x.concepto)}</span></span>${x.id === r.id ? '' : `<button class="btn sec" data-ver="${x.id}">Ver</button>`}</div>`).join('') + `<div class="mut">Total del grupo: ${money(tot)}</div>` + (puedeLigar() ? `<div style="margin-top:6px"><button class="btn sec" id="ddes">Quitar este folio del grupo</button> <button class="btn sec" id="dgrp">Ver el grupo en la lista</button></div>` : ''); })()}` : ''}
   <h3 style="margin:16px 0 4px;font-size:15px">Archivos</h3>${archs}
@@ -530,8 +537,8 @@ function abreDetalle(id) {
     ${puedeImp && esEg ? `<button class="btn sec" id="dgen">Imprimir folio para firma</button>` : ''}
     ${esEg && (a.GENERADO || a.ORIGINAL || puedeImp) ? `<button class="btn gold" id="dgf">Subir folio firmado (reemplaza el generado)</button><input type="file" id="dff" accept="application/pdf,image/*" style="display:none">` : ''}
   </div>
-  ${rev ? `<h3 style="margin:16px 0 4px;font-size:15px">Revisión</h3><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="rsf" style="width:auto" ${r.sin_factura ? 'checked' : ''}> Aplicar %CARGO (pago sin factura)</label>
-    <label>%CARGO</label><input id="rp" type="number" step="0.001" min="0" max="100" inputmode="decimal" value="${Number(r.pct_extra) || 0}" ${r.sin_factura ? '' : 'disabled'}>
+  ${rev ? `<h3 style="margin:16px 0 4px;font-size:15px">Revisión</h3><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="rsf" style="width:auto" ${r.sin_factura ? 'checked' : ''}> Aplicar porcentaje (pago sin factura)</label>
+    <label>Porcentaje (%)</label><input id="rp" type="number" step="0.001" min="0" max="100" inputmode="decimal" value="${Number(r.pct_extra) || 16}" ${r.sin_factura ? '' : 'disabled'}>
     <div class="msg info" id="rt">Total a pagar: <b>${money(r.total_pagar != null ? r.total_pagar : r.monto)}</b></div>
     <button class="btn" id="rg">${r.revisado_en ? 'Actualizar revisión' : 'Marcar como revisado'}</button>${r.revisado_en ? ' <span class="badge b-ok">Revisado</span>' : ''}` : ''}</div>`;
   document.body.appendChild(d);
@@ -567,6 +574,7 @@ function abreDetalle(id) {
     if (!confirm('Se quitará este folio del grupo. El folio se conserva.')) return;
     const { error } = await sb.rpc('folios_desligar', { p_id: id }); if (error) return msg(error.message); await refresca(); $('#dmsg').innerHTML = '<div class="msg ok">Folio desligado del grupo.</div>';
   };
+  if ($('#pm')) { const mp = () => { const m = $('#pm').value, ch = m === 'CHEQUE', tr = m === 'TRANSFERENCIA'; $('#pcw').style.display = ch || tr ? '' : 'none'; $('#pnw').style.display = ch ? '' : 'none'; $('#pbw').style.display = ch || tr ? '' : 'none'; }; $('#pm').onchange = mp; mp(); }
   if ($('#pb')) $('#pb').oninput = e => { e.target.value = fmtBanco(e.target.value); };
   if ($('#dpg')) $('#dpg').onclick = async () => {
     const { error } = await sb.rpc('folios_completar', { p_id: id, p_medio: $('#pm').value, p_chequera: $('#pc').value ? +$('#pc').value : null, p_cheque: $('#pn').value, p_banco: $('#pb').value, p_periodo: $('#pp').value, p_vencimiento: $('#pv').value || null, p_nombre: $('#pnm').value });
@@ -575,10 +583,10 @@ function abreDetalle(id) {
   if ($('#dpdf')) $('#dpdf').onclick = async () => { try { const hoja = r.hoja_id ? S.rows.filter(x => x.hoja_id === r.hoja_id).sort((a, b) => a.id - b.id) : [r]; descarga(await folioHoja(hoja), `Folio_${hoja.map(x => (CARGOS[x.cargo_id] || x.cargo_id) + '_' + x.folio).join('_')}.pdf`); } catch (e) { msg(e.message || String(e)); } };
   if ($('#rsf')) {
     const calc = () => { const sf = $('#rsf').checked, pc = sf ? (parseFloat($('#rp').value) || 0) : 0; $('#rp').disabled = !sf; $('#rt').innerHTML = `Total a pagar: <b>${money(Math.round(r.monto * (1 + pc / 100) * 100) / 100)}</b>`; };
-    $('#rsf').onchange = () => { if (!$('#rsf').checked) $('#rp').value = 0; calc(); }; $('#rp').oninput = calc;
+    $('#rsf').onchange = () => { if ($('#rsf').checked && !(parseFloat($('#rp').value) > 0)) $('#rp').value = 16; calc(); }; $('#rp').oninput = calc;
     $('#rg').onclick = async () => {
       const sf = $('#rsf').checked, pc = sf ? (parseFloat($('#rp').value) || 0) : 0;
-      if (sf && !(pc > 0)) return msg('Se requiere un %CARGO mayor a cero.');
+      if (sf && !(pc > 0)) return msg('Se requiere un porcentaje mayor a cero.');
       const { error } = await sb.rpc('folios_revisar', { p_id: id, p_sin_factura: sf, p_pct: pc });
       if (error) return msg(error.message); await refresca(); $('#dmsg').innerHTML = '<div class="msg ok">Revisión guardada.</div>';
     };
@@ -651,7 +659,7 @@ function imprimeFoliosCancun(lista) {
     if (c) { d.text(String(c.banco || '') + ' ' + fmtCuenta(c.cuenta), M, y + 17); if (c.nota) { d.setFont('helvetica', 'normal'); d.setFontSize(8); d.text(String(c.nota), M, y + 30); } }
     else { d.setFont('helvetica', 'normal'); d.setFontSize(9); d.setTextColor(150); d.text(r.pago === 'EFECTIVO' ? 'Pago en efectivo.' : 'Sin cuenta registrada para este beneficiario.', M, y + 16); }
     y += 62; d.setFont('helvetica', 'bold'); d.setFontSize(7.5); d.setTextColor(20); d.text('SOLICITÓ: PEDRO CARRANZA YEPEZ', M, y);
-    d.setFont('helvetica', 'normal'); d.setTextColor(120); d.text('AUTORIZÓ: ING. JOSE CRISTOBAL GARCIA PERALES', R, y, { align: 'right' });
+    d.setFont('helvetica', 'normal'); d.setTextColor(120); d.text('AUTORIZÓ: ING. JOSÉ CRISTÓBAL GARCÍA PERALES', R, y, { align: 'right' });
   });
   d.save('folios_cancun_' + (lista.length === 1 ? lista[0].folio : lista[0].folio + '_' + lista[lista.length - 1].folio) + '.pdf');
 }
@@ -662,7 +670,7 @@ function vCancun() {
   const villas = [...new Set(base.map(r => r.villa).filter(Boolean))].sort();
   const meses = MESES.map((m, i) => `<option value="${String(i + 1).padStart(2, '0')}" ${C.mes === String(i + 1).padStart(2, '0') ? 'selected' : ''}>${m}</option>`).join('');
   const rows = base.filter(r => (S.cnVerCanc || !esCanc(r)) && r.pago === C.sub && (!C.tipo || r.tipo === C.tipo) && (!C.mes || (r.fecha || '').slice(5, 7) === C.mes) && (!C.villa || r.villa === C.villa) &&
-    (!C.q || [r.concepto, r.categoria, r.villa, r.folio, r.cargo].join(' ').toLowerCase().includes(C.q.toLowerCase())));
+    (!C.q || [r.concepto, r.categoria, r.villa, r.folio, r.cargo].join(' ').toLowerCase().includes(C.q.toLowerCase()))).sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')) || (Number(b.folio) || 0) - (Number(a.folio) || 0));
   const tot = rows.reduce((t, r) => t + (r.pagado === false ? 0 : Number(r.monto || 0)), 0);
   const pendT = rows.reduce((t, r) => t + (r.pagado === false && !esCanc(r) ? Number(r.monto || 0) : 0), 0);
   $('#m').innerHTML = `${S.cnIng ? chipsIng() : panelServicios()}<div class="row" style="margin-bottom:10px"><div class="seg" id="cs">${subs.map(x => `<button data-s="${x[0]}" class="${C.sub === x[0] ? 'on' : ''}">${x[1]} (${base.filter(r => (S.cnVerCanc || !esCanc(r)) && r.pago === x[0] && (!C.tipo || r.tipo === C.tipo)).length})</button>`).join('')}</div></div>
@@ -929,7 +937,7 @@ function vCapturar() {
   <label>Cargo a</label><div class="chips" id="cg">${cargosU(f.unidad).map(c => `<button class="chip ${f.cargo === c ? 'on' : ''}" data-c="${c}">${CARGOS[c]}</button>`).join('')}</div>
   ${f.tipo === 'EGRESO' ? `<div class="msg info">Folio que se asignará: <b class="folio" style="font-size:20px">${proxFolio(f.cargo)}</b></div>` : ''}
   <label>Fecha</label><input type="date" id="cf" value="${f.fecha || hoy}">
-  <label>${f.tipo === 'EGRESO' ? 'Concepto / descripción' : 'Cliente'}</label><input id="cc" value="${esc(f.concepto || '')}" autocomplete="off" placeholder="${f.tipo === 'EGRESO' ? 'Ej. TELCEL, RAYAS, PAPELERIA…' : 'Nombre del cliente'}">
+  <label>${f.tipo === 'EGRESO' ? 'Concepto / descripción' : 'Cliente'}</label><input id="cc" value="${esc(f.concepto || '')}" autocomplete="off" placeholder="${f.tipo === 'EGRESO' ? 'Ej. TELCEL, RAYAS, PAPELERÍA…' : 'Nombre del cliente'}">
     <label>Monto</label><input id="cm" type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00" value="${f.monto || ''}">
   ${f.tipo === 'EGRESO' ? '<label>Folio escaneado (opcional): PDF o imagen</label><input type="file" id="cfile" accept="application/pdf,image/*">' : ''}
   <div style="margin-top:14px"><button class="btn gold" id="go" style="width:100%">Guardar ${f.tipo === 'EGRESO' ? 'folio' : 'ingreso'}</button></div><div id="res"></div></div>`;
@@ -990,7 +998,7 @@ function vCapturarFolio() {
     <div><label>Fecha de vencimiento</label><input type="date" data-f="venc" value="${it.venc}"></div>
     <div><label>Monto</label><input data-f="monto" type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00" value="${it.monto}"></div>
     <div><label>Nombre</label><input data-f="nombre" list="dl-nombres" autocomplete="off" value="${esc(it.nombre)}" placeholder="Beneficiario o proveedor"></div>
-    <div class="full"><label>Concepto / descripción</label><input data-f="concepto" autocomplete="off" value="${esc(it.concepto)}" placeholder="Ej. TELCEL, RAYAS, PAPELERIA…"></div>
+    <div class="full"><label>Concepto / descripción</label><input data-f="concepto" autocomplete="off" value="${esc(it.concepto)}" placeholder="Ej. TELCEL, RAYAS, PAPELERÍA…"></div>
     ${solo ? '' : `<div><label>Datos bancarios${it.medio === 'TRANSFERENCIA' ? '' : ' (opcional)'}</label><input data-f="banco" inputmode="numeric" placeholder="0000-0000-0000-0000" value="${esc(it.banco)}"></div><div><label>Periodo (opcional)</label><input data-f="periodo" value="${esc(it.periodo)}" placeholder="Ej. 1 AL 15 OCT"></div>`}
     </div>
   </div>`;
@@ -1098,13 +1106,13 @@ async function cajaFolio(d, r, y0, h, W) {
   if (r.datos_bancarios) { txt(r.datos_bancarios, cx, fila(k), { align: 'center' }, 9); k += 2; }
   if (r.periodo) { txt(r.periodo, cx, fila(k), { align: 'center' }, 9); k += 2; }
   const pct = Number(r.pct_extra) || 0, tot = r.total_pagar != null ? Number(r.total_pagar) : Number(r.monto) * (1 + pct / 100);
-  txt('%CARGO' + (pct ? ' ' + pct + '%' : ''), xs[3] - 8, fila(rows - 2), { align: 'right' }, 9); txt(money(Number(r.monto) * pct / 100), xs[4] - 8, fila(rows - 2), { align: 'right' }, 9);
+  txt(pct ? pct + ' %' : '%', xs[3] - 8, fila(rows - 2), { align: 'right' }, 9); txt(money(Number(r.monto) * pct / 100), xs[4] - 8, fila(rows - 2), { align: 'right' }, 9);
   txt('TOTAL', xs[3] - 8, fila(rows - 1), { align: 'right' }, 10, 1); txt(money(tot), xs[4] - 8, fila(rows - 1), { align: 'right' }, 10, 1);
   d.line(x0, tb, x0 + w, tb);
   const by = T(19.8);
   txt('SOLICITO: ' + (fu.nombre || ''), x0 + 8, by, {}, 10);
   if (fu.firma) { try { d.addImage(fu.firma, 'PNG', x0 + 70, tb + 2, 75, 25); } catch (e) { } }
-  txt('AUTORIZO: ING. CRISTOBAL', x0 + w - 14, by, { align: 'right' }, 10);
+  txt('AUTORIZO: ING. CRISTÓBAL', x0 + w - 14, by, { align: 'right' }, 10);
   const bw = 230, bx = x0 + (w - bw) / 2;
   d.rect(bx, T(20.4), bw, T(22.8) - T(20.4));
   d.setTextColor(120); txt('FIRMA', bx + 4, T(20.4) + 8, {}, 6.5); d.setTextColor(0);
