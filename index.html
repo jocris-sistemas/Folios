@@ -110,7 +110,7 @@ const puedeEdFol = () => !!(S.perfil && S.perfil.puede_editar_folios);
 const puedeImpPl = () => !!(S.perfil && S.perfil.solo_folios && S.perfil.puede_importar_platon);
 const soloFolios = () => !!(S.perfil && S.perfil.solo_folios);
 const veCancun = () => !!(S.perfil && S.perfil.puede_cancun && !S.perfil.solo_folios);
-const veAcumulado = () => false;
+const veAcumulado = () => !!(S.perfil && !S.perfil.solo_folios);
 
 /* ---------- datos ---------- */
 async function cargar() {
@@ -176,6 +176,8 @@ async function cargarExtra() {
       ac = ac.concat(data); if (data.length < 1000) break; from += 1000;
     }
     S.acum = ac;
+    S.hoja = {};
+    try { const { data } = await sb.from('platon_acumulado_hoja').select('semana,lineas,solicito'); (data || []).forEach(h => { S.hoja[h.semana] = h; }); } catch (e) { }
   }
   if (veCancun()) {
     let cn = []; from = 0;
@@ -438,7 +440,7 @@ function vFolios() {
   ${rows.map(r => { const ch = S.cruce[r.cargo_id + '-' + r.folio]; return `<tr data-d="${r.id}" style="cursor:pointer">${puedeLigar() ? `<td><input type="checkbox" data-lg="${r.id}" style="width:auto" ${S.lg[r.id] ? 'checked' : ''}></td>` : ''}${S.unidad ? '' : `<td>${nomU(r.unidad)}</td>`}<td>${CARGOS[r.cargo_id]}</td><td class="n folio">${r.folio}</td><td>${r.fecha.split('-').reverse().join('/')}</td><td class="wrap">${esc(r.concepto)}</td><td class="n">${money(r.monto)}</td>
   ${soloFolios() ? '' : `<td class="n">${money(r.total_pagar != null ? r.total_pagar : r.monto)}${r.sin_factura ? ` <span class="badge b-bad" title="Sin factura">+${Number(r.pct_extra)}%</span>` : ''}</td>
   <td>${S.fp && S.fp[r.id] ? pagoBadgeFp(S.fp[r.id], S.sug[r.id]) : ch ? `<span class="badge b-ok">Cheque ${esc(ch)}</span>` : (S.medio || {})[r.id] ? `<span class="badge b-ok" title="${esc(S.medio[r.id].referencia || '')}">${S.medio[r.id].medio === 'EFECTIVO' ? 'Efectivo' : esc(S.medio[r.id].medio)}</span>` : '<span class="badge b-no">Sin asignar</span>'}</td>`}
-  ${soloFolios() ? '' : `<td>${archBadge(r)}</td><td>${estadoBadge(r)}${r.grupo_id ? ` <a href="#" class="badge b-no" data-g="${r.grupo_id}" title="Folios ligados: ver el grupo">Grupo ${r.grupo_id}</a>` : ''}</td>`}<td style="white-space:nowrap">${!soloFolios() || r.creado_por === S.perfil.id ? `<button class="btn sec" data-pi="${r.id}">Imprimir</button> <button class="btn ghost" data-pf="${r.id}">Subir firmado</button>` : ''}</td>${puedeEdFol() ? `<td><a href="#" data-an="${r.id}" class="mut">Cancelar</a></td>` : ''}</tr>`; }).join('')}
+  ${soloFolios() ? '' : `<td>${archBadge(r)}</td><td>${estadoBadge(r)}${r.grupo_id ? ` <a href="#" class="badge b-no" data-g="${r.grupo_id}" title="Folios ligados: ver el grupo">Grupo ${r.grupo_id}</a>` : ''}</td>`}<td style="white-space:nowrap">${!soloFolios() || r.creado_por === S.perfil.id ? `<button class="btn sec" data-pi="${r.id}">Imprimir</button>${soloFolios() ? ` <button class="btn ghost" data-pf="${r.id}">Subir firmado</button>` : ''}` : ''}</td>${puedeEdFol() ? `<td><a href="#" data-an="${r.id}" class="mut">Cancelar</a></td>` : ''}</tr>`; }).join('')}
   </tbody></table></div>`;
   ligaFiltros(vFolios);
   { const b1 = $('#bcap'), b2 = $('#bfoto'), b3 = $('#bimp');
@@ -535,7 +537,7 @@ function abreDetalle(id) {
   <div class="row" style="margin-top:8px">
     ${puedeImp && esEg ? `<button class="btn sec" id="dga">Adjuntar folio (PDF o imagen)</button><input type="file" id="dfa" accept="application/pdf,image/*" style="display:none">` : ''}
     ${puedeImp && esEg ? `<button class="btn sec" id="dgen">Imprimir folio para firma</button>` : ''}
-    ${esEg && (a.GENERADO || a.ORIGINAL || puedeImp) ? `<button class="btn gold" id="dgf">Subir folio firmado (reemplaza el generado)</button><input type="file" id="dff" accept="application/pdf,image/*" style="display:none">` : ''}
+    ${soloFolios() && esEg && (a.GENERADO || a.ORIGINAL || puedeImp) ? `<button class="btn gold" id="dgf">Subir folio firmado (reemplaza el generado)</button><input type="file" id="dff" accept="application/pdf,image/*" style="display:none">` : ''}
   </div>
   ${rev ? `<h3 style="margin:16px 0 4px;font-size:15px">Revisión</h3><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="rsf" style="width:auto" ${r.sin_factura ? 'checked' : ''}> Aplicar porcentaje (pago sin factura)</label>
     <label>Porcentaje (%)</label><input id="rp" type="number" step="0.001" min="0" max="100" inputmode="decimal" value="${Number(r.pct_extra) || 16}" ${r.sin_factura ? '' : 'disabled'}>
@@ -811,6 +813,69 @@ async function abreCapturaCancun(ed) {
 /* ---------- Acumulado semanal ---------- */
 const viernesDe = iso => { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + ((5 - d.getUTCDay() + 7) % 7)); return d.toISOString().slice(0, 10); };
 const sumaDias = (iso, n) => { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+
+const FOLIO_TXT = f => /^\d+$/.test(String(f)) ? String(f).padStart(3, '0') : String(f == null ? '' : f);
+const semanaTxt = v => { const a = sumaDias(v, -4).split('-'), b = sumaDias(v, 2).split('-'), M = MESES_L; return a[1] === b[1] ? `SEMANA DEL ${+a[2]} AL ${+b[2]} DE ${M[+b[1] - 1]} ${b[0]}` : `SEMANA DEL ${+a[2]} DE ${M[+a[1] - 1]}${a[0] !== b[0] ? ' ' + a[0] : ''} AL ${+b[2]} DE ${M[+b[1] - 1]} ${b[0]}`; };
+function hojaLineas(sem) {
+  const byId = new Map(S.rows.map(r => [r.id, r])), act = S.acum.filter(a => a.semana === sem && byId.has(a.mov_id)), am = new Set(act.map(a => a.mov_id)), g = (S.hoja || {})[sem], out = [], usados = new Set();
+  ((g && g.lineas) || []).forEach(l => { if (l.k === 'm') { if (am.has(l.id) && !usados.has(l.id)) { usados.add(l.id); out.push({ k: 'm', id: l.id }); } } else if (l.k === 'x' || l.k === 'b') out.push(l); });
+  act.slice().sort((x, y) => byId.get(x.mov_id).cargo_id - byId.get(y.mov_id).cargo_id || byId.get(x.mov_id).folio - byId.get(y.mov_id).folio).forEach(a => { if (!usados.has(a.mov_id)) out.push({ k: 'm', id: a.mov_id }); });
+  return out;
+}
+function hojaDatos(sem, lineas) {
+  const byId = new Map(S.rows.map(r => [r.id, r])), am = new Map(S.acum.filter(a => a.semana === sem).map(a => [a.mov_id, a]));
+  return lineas.map(l => { if (l.k === 'b') return { b: 1 }; if (l.k === 'm') { const r = byId.get(l.id); return { c: CARGOS[r.cargo_id] || '', f: FOLIO_TXT(r.folio), t: r.concepto || '', m: Number(am.get(l.id).monto) }; } return { c: String(l.c || '').toUpperCase(), f: String(l.f || ''), t: String(l.t || ''), m: Number(l.m) || 0 }; });
+}
+async function hojaGuarda(sem, lineas, solicito) {
+  S.hoja = S.hoja || {}; const g = S.hoja[sem] || { semana: sem, solicito: null };
+  const sol = solicito === undefined ? g.solicito : solicito;
+  const { error } = await sb.rpc('acumulado_hoja_guardar', { p_semana: sem, p_lineas: lineas, p_solicito: sol || '' });
+  if (error) throw new Error(error.message);
+  S.hoja[sem] = { semana: sem, lineas, solicito: sol || null };
+}
+async function acumuladoPDF(sem) {
+  const { jsPDF } = window.jspdf, d = new jsPDF({ unit: 'pt', format: 'letter' });
+  const datos = hojaDatos(sem, hojaLineas(sem)), g = (S.hoja || {})[sem] || {};
+  const fu = await firmaDe(S.perfil.id).catch(() => ({ nombre: '', firma: null }));
+  const nom = String(g.solicito || fu.nombre || S.perfil.nombre_firma || S.perfil.nombre || '').toUpperCase();
+  const mia = !g.solicito || String(g.solicito).toUpperCase() === String(fu.nombre || '').toUpperCase();
+  const X = [24, 84, 134, 462, 588], Y0 = 24, HT = 744, rh = 13, N = 42, top = 110, bot = top + N * rh;
+  const total = datos.reduce((t, x) => t + (x.b ? 0 : x.m), 0), pags = Math.max(1, Math.ceil((datos.length + 1) / N));
+  const txt = (t, x, y, o, sz, b) => { d.setFont('times', b ? 'bold' : 'normal'); d.setFontSize(sz); d.text(String(t == null ? '' : t), x, y, o || {}); };
+  const num = n => Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const ajusta = (t, maxw, sz) => { d.setFont('times', 'normal'); let z = sz; d.setFontSize(z); while (z > 6 && d.getTextWidth(t) > maxw) { z -= .25; d.setFontSize(z); } let u = String(t); while (u.length > 3 && d.getTextWidth(u) > maxw) u = u.slice(0, -2); return [u, z]; };
+  for (let p = 0; p < pags; p++) {
+    if (p) d.addPage();
+    d.setDrawColor(0); d.setLineWidth(.9); d.rect(X[0], Y0, X[4] - X[0], HT); d.setLineWidth(.6);
+    d.line(X[0], 66, X[4], 66); d.line(X[0], 90, X[4], 90); d.line(X[0], top, X[4], top);
+    txt('ACUMULADO', (X[0] + X[4]) / 2, 50, { align: 'center' }, 11, 1);
+    txt(semanaTxt(sem), (X[0] + X[4]) / 2, 82, { align: 'center' }, 9, 1);
+    txt('CARGO A:', (X[0] + X[1]) / 2, 103, { align: 'center' }, 9, 1); txt('FOLIO', (X[1] + X[2]) / 2, 103, { align: 'center' }, 9, 1);
+    txt('CONCEPTO', (X[2] + X[3]) / 2, 103, { align: 'center' }, 9, 1); txt('CANTIDAD', (X[3] + X[4]) / 2, 103, { align: 'center' }, 9, 1);
+    [1, 2, 3].forEach(k => d.line(X[k], 90, X[k], bot));
+    d.setLineWidth(.35); for (let i = 1; i <= N; i++) d.line(X[0], top + i * rh, X[4], top + i * rh); d.setLineWidth(.6);
+    d.line(X[0], bot, X[4], bot);
+    datos.slice(p * N, (p + 1) * N).forEach((x, i) => {
+      if (x.b) return; const y = top + i * rh + 9.4;
+      txt(x.c, (X[0] + X[1]) / 2, y, { align: 'center' }, 8); txt(x.f, X[2] - 4, y, { align: 'right' }, 8);
+      const [t, z] = ajusta(x.t, X[3] - X[2] - 12, 8); txt(t, X[2] + 4, y, {}, z);
+      txt('$', X[3] + 5, y, {}, 8); txt(num(x.m), X[4] - 5, y, { align: 'right' }, 8);
+    });
+    if (p === pags - 1) {
+      const y = top + (N - 1) * rh + 9.4; txt('$', X[3] + 5, y, {}, 8, 1); txt(num(total), X[4] - 5, y, { align: 'right' }, 8, 1);
+      txt('SOLICITO: ' + nom, X[0] + 12, bot + 22, {}, 8, 1);
+      if (mia && fu.firma) { try { const q = d.getImageProperties(fu.firma), k = Math.min(120 / q.width, 56 / q.height); d.addImage(fu.firma, 'PNG', X[0] + 28, bot + 28, q.width * k, q.height * k); } catch (e) { } }
+    }
+    if (pags > 1) txt(`Hoja ${p + 1} de ${pags}`, X[4] - 6, Y0 + HT - 6, { align: 'right' }, 7);
+  }
+  return d.output('blob');
+}
+function imprimeBlob(blob) {
+  const url = URL.createObjectURL(blob), f = document.createElement('iframe');
+  f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0'; f.src = url;
+  f.onload = () => { try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { descarga(blob, 'Acumulado.pdf'); } setTimeout(() => { f.remove(); URL.revokeObjectURL(url); }, 60000); };
+  document.body.appendChild(f);
+}
 function vAcumulado() {
   const A = S.ac; if (!A.semana) A.semana = viernesDe(hoyISO());
   const byId = new Map(S.rows.map(r => [r.id, r]));
@@ -830,13 +895,18 @@ function vAcumulado() {
   S.acum.forEach(a => { const r = byId.get(a.mov_id); if (!r) return; cgs.add(r.cargo_id); const h = hist[a.semana] = hist[a.semana] || { n: 0, t: 0, c: {} }; h.n++; h.t += Number(a.monto); h.c[r.cargo_id] = (h.c[r.cargo_id] || 0) + Number(a.monto); });
   const cgl = [...cgs].sort((a, b) => (CARGOS[a] || '').localeCompare(CARGOS[b] || ''));
   const sems = Object.keys(hist).sort().reverse();
+  const HL = hojaLineas(A.semana), HD = hojaDatos(A.semana, HL), ed = puedeCapturar();
+  const ordBtn = i => ed ? `<button class="btn ghost" data-hu="${i}" style="padding:2px 7px" ${i ? '' : 'disabled'}>▲</button><button class="btn ghost" data-hd="${i}" style="padding:2px 7px" ${i < HL.length - 1 ? '' : 'disabled'}>▼</button><button class="btn ghost" data-hb="${i}" style="padding:2px 7px" title="Insertar renglón en blanco debajo">＋</button>` : '';
+  const accBtn = i => ed ? `<a href="#" data-hx="${i}" class="mut">Quitar</a>` : '';
   $('#m').innerHTML = `<div class="card" style="max-width:none"><div class="row" style="justify-content:space-between"><div class="row"><button class="btn sec" id="sp">◀</button><div><label style="margin:0">Semana (viernes)</label><input type="date" id="sw" value="${A.semana}" style="width:auto"></div><button class="btn sec" id="sn">▶</button></div>
     <div class="grid" style="min-width:260px;grid-template-columns:repeat(2,1fr)"><div class="kpi"><small>Folios pagados</small><b>${deSem.length}</b></div><div class="kpi"><small>Total de la semana</small><b>${money(totSem)}</b></div></div></div></div>
-  <h3 style="margin:14px 0 6px">Pagado en la semana del ${fFecha(A.semana)}</h3>
-  ${deSem.length ? `<div class="tw" style="max-height:340px"><table><thead><tr><th>Cargo</th><th class="n">Folio</th><th>Fecha</th><th>Concepto</th><th class="n">Monto pagado</th><th></th></tr></thead><tbody>
-  ${deSem.map(x => `<tr><td>${CARGOS[x.r.cargo_id] || ''}</td><td class="n folio">${x.r.folio}</td><td>${fFecha(x.r.fecha)}</td><td class="wrap">${esc(x.r.concepto)}</td><td class="n">${money(x.a.monto)}</td><td>${puedeCapturar() ? `<a href="#" data-q="${x.r.id}" class="mut">Quitar</a>` : ''}</td></tr>`).join('')}
-  ${Object.keys(porCargo).map(c => `<tr class="tot"><td colspan="4">Subtotal ${CARGOS[c] || c} (${porCargo[c].n})</td><td class="n">${money(porCargo[c].t)}</td><td></td></tr>`).join('')}
-  <tr class="tot"><td colspan="4">TOTAL SEMANA</td><td class="n">${money(totSem)}</td><td></td></tr></tbody></table></div>` : '<div class="msg info">Aún no hay folios registrados en esta semana.</div>'}
+  <h3 style="margin:14px 0 6px">Hoja del acumulado · ${semanaTxt(A.semana)}</h3>
+  <div class="row" style="margin-bottom:8px;justify-content:space-between"><div class="row"><label style="margin:0">SOLICITO</label><input id="hsol" value="${esc(((S.hoja || {})[A.semana] || {}).solicito || '')}" placeholder="${esc(String(S.perfil.nombre_firma || S.perfil.nombre || '').toUpperCase())}" style="width:240px"></div><div class="row"><button class="btn sec" id="hpdf">Descargar PDF</button><button class="btn gold" id="hprn">Imprimir</button></div></div>
+  ${HD.length ? `<div class="tw" style="max-height:480px"><table><thead><tr><th>Orden</th><th>Cargo</th><th class="n">Folio</th><th>Concepto</th><th class="n">Cantidad</th><th></th></tr></thead><tbody>
+  ${HD.map((x, i) => x.b ? `<tr style="background:#f4f4f4"><td style="white-space:nowrap">${ordBtn(i)}</td><td colspan="4" class="mut">— renglón en blanco —</td><td>${accBtn(i)}</td></tr>` : HL[i].k === 'x' ? `<tr><td style="white-space:nowrap">${ordBtn(i)}</td><td><input data-xf="c" data-i="${i}" value="${esc(x.c)}" style="width:90px;padding:4px"></td><td class="n"><input data-xf="f" data-i="${i}" value="${esc(x.f)}" style="width:70px;padding:4px"></td><td><input data-xf="t" data-i="${i}" value="${esc(x.t)}" style="min-width:240px;padding:4px"></td><td class="n"><input data-xf="m" data-i="${i}" type="number" step="0.01" value="${x.m}" style="width:110px;padding:4px"></td><td>${accBtn(i)}</td></tr>` : `<tr><td style="white-space:nowrap">${ordBtn(i)}</td><td>${esc(x.c)}</td><td class="n folio">${esc(x.f)}</td><td class="wrap">${esc(x.t)}</td><td class="n">${money(x.m)}</td><td>${accBtn(i)}</td></tr>`).join('')}
+  <tr class="tot"><td colspan="4">TOTAL SEMANA (${HD.filter(x => !x.b).length} renglones)</td><td class="n">${money(HD.reduce((t, x) => t + (x.b ? 0 : x.m), 0))}</td><td></td></tr></tbody></table></div>` : '<div class="msg info">Aún no hay folios en la hoja de esta semana. Agregarlos más abajo.</div>'}
+  ${puedeCapturar() ? `<div class="row" style="margin:10px 0;align-items:flex-end;flex-wrap:wrap"><div><label>Cargo</label><input id="mc" style="width:100px"></div><div><label>Folio</label><input id="mf" style="width:80px"></div><div style="flex:1;min-width:200px"><label>Concepto</label><input id="mt"></div><div><label>Cantidad</label><input id="mm" type="number" step="0.01" style="width:120px"></div><button class="btn sec" id="mag">Agregar renglón</button><button class="btn ghost" id="mbl">Agregar renglón en blanco</button>${veCancun() ? '<button class="btn ghost" id="mcn">Agregar de Cancún</button>' : ''}</div>
+  ${A.cnOpen && veCancun() ? (() => { const enH = new Set(HL.filter(l => l.k === 'x' && l.cn).map(l => l.cn)); const cr = (S.cancun || []).filter(m => m.tipo === 'EGRESO' && !(m.pagado === false && /^CANCELADO/i.test(m.pagado_nota || '')) && m.fecha >= (A.cnDesde || sumaDias(A.semana, -10)) && !enH.has(m.id)).sort((x, y) => y.fecha.localeCompare(x.fecha)).slice(0, 200); return `<div class="card" style="max-width:none"><div class="row" style="justify-content:space-between"><b>Gastos de Cancún</b><div class="row"><label style="margin:0">Desde</label><input type="date" id="cnd" value="${A.cnDesde || sumaDias(A.semana, -10)}" style="width:auto"><button class="btn gold" id="cnadd">Agregar seleccionados</button></div></div><div class="tw" style="max-height:260px"><table><thead><tr><th></th><th>Fecha</th><th>Folio</th><th>Concepto</th><th class="n">Monto</th></tr></thead><tbody>${cr.map(m => `<tr><td><input type="checkbox" data-cn="${m.id}" style="width:auto"></td><td>${fFecha(m.fecha)}</td><td>${esc(m.folio || '')}</td><td class="wrap">${esc(m.concepto || '')}</td><td class="n">${money(m.monto)}</td></tr>`).join('') || '<tr><td colspan="5" class="mut">Sin gastos de Cancún en ese periodo.</td></tr>'}</tbody></table></div></div>`; })() : ''}` : ''}
   ${puedeCapturar() ? `<h3 style="margin:18px 0 6px">Agregar folios pagados a esta semana</h3>
   <div class="chips" style="margin-bottom:8px">${[[0, 'Todos'], ...cargosAll.map(c => [c, CARGOS[c] || c])].map(c => `<button class="chip ${A.cargo === c[0] ? 'on' : ''}" data-c="${c[0]}">${c[1]}</button>`).join('')}</div>
   <div class="sticky-f"><input type="date" id="ad" value="${A.desde}" title="Folios desde"><input id="aq" placeholder="Buscar concepto o folio…" value="${esc(A.q)}"></div>
@@ -866,11 +936,32 @@ function vAcumulado() {
     if (error) { b.disabled = false; return alert(error.message); }
     A.sel = {}; await cargar(); vAcumulado();
   };
-  document.querySelectorAll('[data-q]').forEach(a => a.onclick = async e => {
-    e.preventDefault(); if (!confirm('Quitar el folio de esta semana? El registro se conserva como inactivo.')) return;
-    const { error } = await sb.rpc('acumulado_quitar', { p_mov: +a.dataset.q }); if (error) return alert(error.message);
-    await cargar(); vAcumulado();
+  const guarda = async L => { try { await hojaGuarda(A.semana, L); } catch (er) { alert(er.message || er); } vAcumulado(); };
+  document.querySelectorAll('[data-hu]').forEach(b => b.onclick = () => { const i = +b.dataset.hu, L = HL.slice(); [L[i - 1], L[i]] = [L[i], L[i - 1]]; guarda(L); });
+  document.querySelectorAll('[data-hd]').forEach(b => b.onclick = () => { const i = +b.dataset.hd, L = HL.slice(); [L[i + 1], L[i]] = [L[i], L[i + 1]]; guarda(L); });
+  document.querySelectorAll('[data-hb]').forEach(b => b.onclick = () => { const i = +b.dataset.hb, L = HL.slice(); L.splice(i + 1, 0, { k: 'b' }); guarda(L); });
+  document.querySelectorAll('[data-hx]').forEach(a => a.onclick = async e => {
+    e.preventDefault(); const i = +a.dataset.hx, l = HL[i], L = HL.slice();
+    if (l.k === 'm') {
+      if (!confirm('Quitar el folio de esta semana? El registro se conserva como inactivo.')) return;
+      const { error } = await sb.rpc('acumulado_quitar', { p_mov: l.id }); if (error) return alert(error.message);
+      L.splice(i, 1); try { await hojaGuarda(A.semana, L); } catch (er) { } await cargar(); return vAcumulado();
+    }
+    L.splice(i, 1); guarda(L);
   });
+  document.querySelectorAll('[data-xf]').forEach(c => c.onchange = () => { const i = +c.dataset.i, L = HL.map(l => ({ ...l })); L[i][c.dataset.xf] = c.value; guarda(L); });
+  if ($('#mag')) $('#mag').onclick = () => { const t = $('#mt').value.trim(), m = Number($('#mm').value); if (!t || !(m > 0)) return alert('Capturar concepto y cantidad.'); guarda([...HL, { k: 'x', c: $('#mc').value.trim().toUpperCase(), f: $('#mf').value.trim(), t: t.toUpperCase(), m }]); };
+  if ($('#mbl')) $('#mbl').onclick = () => guarda([...HL, { k: 'b' }]);
+  if ($('#mcn')) $('#mcn').onclick = () => { A.cnOpen = !A.cnOpen; vAcumulado(); };
+  if ($('#cnd')) $('#cnd').onchange = e => { A.cnDesde = e.target.value; vAcumulado(); };
+  if ($('#cnadd')) $('#cnadd').onclick = () => {
+    const ids = [...document.querySelectorAll('input[data-cn]:checked')].map(c => c.dataset.cn); if (!ids.length) return alert('Seleccionar al menos un gasto.');
+    const nuevos = ids.map(id => (S.cancun || []).find(m => String(m.id) === id)).filter(Boolean).sort((x, y) => String(x.folio).localeCompare(String(y.folio))).map(m => ({ k: 'x', c: 'CANCUN', f: String(m.folio || ''), t: String(m.concepto || '').toUpperCase(), m: Number(m.monto), cn: m.id }));
+    A.cnOpen = false; guarda([...HL, ...nuevos]);
+  };
+  if ($('#hsol')) $('#hsol').onchange = async e => { try { await hojaGuarda(A.semana, HL, e.target.value.trim().toUpperCase()); } catch (er) { alert(er.message || er); } };
+  const sal = async imp => { const b = $(imp ? '#hprn' : '#hpdf'); b.disabled = true; try { const blob = await acumuladoPDF(A.semana); if (imp) imprimeBlob(blob); else descarga(blob, `Acumulado_${A.semana}.pdf`); } catch (er) { alert(er.message || er); } b.disabled = false; };
+  $('#hpdf').onclick = () => sal(false); $('#hprn').onclick = () => sal(true);
 }
 
 /* ---------- Ingresos ---------- */
@@ -1109,14 +1200,18 @@ async function cajaFolio(d, r, y0, h, W) {
   txt(pct ? pct + ' %' : '%', xs[3] - 8, fila(rows - 2), { align: 'right' }, 9); txt(money(Number(r.monto) * pct / 100), xs[4] - 8, fila(rows - 2), { align: 'right' }, 9);
   txt('TOTAL', xs[3] - 8, fila(rows - 1), { align: 'right' }, 10, 1); txt(money(tot), xs[4] - 8, fila(rows - 1), { align: 'right' }, 10, 1);
   d.line(x0, tb, x0 + w, tb);
-  const by = T(19.8);
-  txt('SOLICITO: ' + (fu.nombre || ''), x0 + 8, by, {}, 10);
-  if (fu.firma) { try { d.addImage(fu.firma, 'PNG', x0 + 70, tb + 2, 75, 25); } catch (e) { } }
-  txt('AUTORIZO: ING. CRISTÓBAL', x0 + w - 14, by, { align: 'right' }, 10);
-  const bw = 230, bx = x0 + (w - bw) / 2;
-  d.rect(bx, T(20.4), bw, T(22.8) - T(20.4));
-  d.setTextColor(120); txt('FIRMA', bx + 4, T(20.4) + 8, {}, 6.5); d.setTextColor(0);
-  txt(RESP[r.cargo_id] || CARGOS[r.cargo_id] || '', x0 + w / 2, T(23.55), { align: 'center' }, 9, 1);
+  const cw = w / 3, fit = (t, maxw, sz, b) => { d.setFont('helvetica', b ? 'bold' : 'normal'); let z = sz; d.setFontSize(z); while (z > 5.5 && d.getTextWidth(String(t)) > maxw) { z -= .25; d.setFontSize(z); } return z; };
+  const bloque = (i, cap, nombre, img) => {
+    const cx = x0 + cw * i + cw / 2, ly = T(22.1);
+    d.setTextColor(110); txt(cap, cx, T(18.3), { align: 'center' }, 6.5, 1); d.setTextColor(0);
+    if (img) { try { const p = d.getImageProperties(img), k = Math.min((cw - 44) / p.width, (ly - T(18.7) - 2) / p.height); d.addImage(img, 'PNG', cx - p.width * k / 2, ly - 2 - p.height * k, p.width * k, p.height * k); } catch (e) { } }
+    d.setLineWidth(.5); d.line(x0 + cw * i + 16, ly, x0 + cw * (i + 1) - 16, ly); d.setLineWidth(.6);
+    const nm = String(nombre || '').toUpperCase(); txt(nm, cx, T(22.9), { align: 'center' }, fit(nm, cw - 22, 7.5, 1), 1);
+  };
+  bloque(0, 'SOLICITA', fu.nombre, fu.firma);
+  bloque(1, 'RESPONSABLE', RESP[r.cargo_id] || CARGOS[r.cargo_id] || '', null);
+  bloque(2, 'AUTORIZA', 'ING. JOSÉ CRISTÓBAL GARCÍA PERALES', null);
+  d.setLineWidth(.3); [1, 2].forEach(i => d.line(x0 + cw * i, tb + 5, x0 + cw * i, T(23.4))); d.setLineWidth(.6);
 }
 /* ---------- Mi firma ---------- */
 function abreFirma() {
