@@ -8,9 +8,10 @@
 <link rel="icon" href="icon-192.png?v=2">
 <link rel="apple-touch-icon" href="icon-192.png?v=2">
 <title>Folios</title>
+<link rel="preconnect" href="https://hbttxvanyqczspljtqpz.supabase.co" crossorigin>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" integrity="sha384-Rj26LVGvoeRVR6+mwQmFfcR3QOBEwT+ZmuCWpuiqeTzJpCs0ER4ITAWGb4Hiy3Ok" crossorigin="anonymous"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js" integrity="sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk" crossorigin="anonymous"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js" integrity="sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk" crossorigin="anonymous"></script>
 <style>
 :root{--bg:#f3f5f9;--card:#fff;--ink:#17222f;--mut:#667386;--line:#dfe5ee;--pri:#14345c;--pri2:#1f4f8a;--gold:#c8962b;--ok:#18794e;--okbg:#e3f4eb;--bad:#b3261e;--badbg:#fbe9e7;--chip:#e8eef7}
 @media(prefers-color-scheme:dark){:root{--bg:#0d1520;--card:#15202e;--ink:#e6edf5;--mut:#94a3b5;--line:#25354a;--pri:#8fb6ea;--pri2:#6c9ad8;--gold:#e0b04a;--ok:#5fcf9a;--okbg:#14352a;--bad:#ff8c84;--badbg:#3a1b19;--chip:#1d2c40}}
@@ -113,94 +114,77 @@ const veCancun = () => !!(S.perfil && S.perfil.puede_cancun && !S.perfil.solo_fo
 const veAcumulado = () => !!(S.perfil && !S.perfil.solo_folios);
 
 /* ---------- datos ---------- */
+/* Pagina una consulta (páginas en paralelo). Con dura=true lanza el error; si no, devuelve null. */
+async function pagina(mk, dura, ini) {
+  const out = []; let f = 0, n = ini || 1;
+  for (;;) {
+    const rs = await Promise.all(Array.from({ length: n }, (_, i) => mk().range(f + i * 1000, f + i * 1000 + 999)));
+    for (const r of rs) {
+      if (r.error) { if (dura) throw r.error; return null; }
+      for (let i = 0; i < r.data.length; i++) out.push(r.data[i]);
+      if (r.data.length < 1000) return out;
+    }
+    f += n * 1000; n = 3;
+  }
+}
 async function cargar() {
-  try { const { data: cu } = await sb.from('cargos_unidad').select('cargo_id,unidad'); S.cu = {}; (cu || []).forEach(x => S.cu[x.cargo_id] = x.unidad); } catch (e) { S.cu = {}; }
-  const { data: cg } = await sb.from('cargos').select('id,nombre,activo,solo_caja,responsable').order('id');
+  const sol = soloFolios();
+  const [cuR, cgR, chR, rows, cruce, medio, fpR, sgR] = await Promise.all([
+    sb.from('cargos_unidad').select('cargo_id,unidad').then(r => r, () => ({})),
+    sb.from('cargos').select('id,nombre,activo,solo_caja,responsable').order('id'),
+    sol ? null : sb.from('chequeras').select('id,nombre,activa').eq('activa', true).order('nombre').then(r => r, () => ({})),
+    pagina(() => sb.from('platon_movimientos').select('id,unidad,cargo_id,tipo,folio,fecha,concepto,categoria,monto,origen,lote,nota,sin_factura,pct_extra,total_pagar,revisado_en,creado_por,creado_en,medio_pago,vencimiento,nombre,datos_bancarios,periodo,chequera_id,numero_cheque,hoja_id,datos_completos,grupo_id').eq('activo', true).order('fecha').order('id'), true, 2),
+    sol ? null : pagina(() => sb.from('platon_cruce').select('cargo_id,folio,cheques').not('cheques', 'is', null)),
+    sol ? null : pagina(() => sb.from('platon_medio').select('mov_id,medio,referencia')),
+    sol ? null : pagina(() => sb.from('folio_pago').select('origen_app,clave,medio,cheques,semana_efectivo,monto_efectivo,ref_medio,conflicto')).catch(() => null),
+    sol ? null : sb.from('folio_sugerencias').select('mov_id,tipo_sugerido,referencia,fecha_ref,ref_id,dif_dias,orden').lte('orden', 3).order('orden').then(r => r, () => ({})),
+    cargarExtra()
+  ]);
+  S.cu = {}; ((cuR && cuR.data) || []).forEach(x => S.cu[x.cargo_id] = x.unidad);
+  const cg = cgR.data;
   (cg || []).forEach(c => { if (c.responsable) RESP[c.id] = c.responsable; });
   (cg || []).filter(c => c.activo && (!c.solo_caja || (S.cu || {})[c.id])).forEach(c => { CARGOS[c.id] = limpia(c.nombre); CARGO_ID[limpia(c.nombre)] = c.id; });
-  S.chq = []; if (!soloFolios()) { try { const { data: ch } = await sb.from('chequeras').select('id,nombre,activa').eq('activa', true).order('nombre'); S.chq = ch || []; } catch (e) { } }
-  let all = [], from = 0;
-  for (;;) {
-    const { data, error } = await sb.from('platon_movimientos').select('id,unidad,cargo_id,tipo,folio,fecha,concepto,categoria,monto,origen,lote,nota,sin_factura,pct_extra,total_pagar,revisado_en,creado_por,creado_en,medio_pago,vencimiento,nombre,datos_bancarios,periodo,chequera_id,numero_cheque,hoja_id,datos_completos,grupo_id').eq('activo', true).order('fecha').order('id').range(from, from + 999);
-    if (error) throw error;
-    all = all.concat(data); if (data.length < 1000) break; from += 1000;
-  }
-  S.rows = all;
-  (cg || []).forEach(c => { if (!CARGOS[c.id] && all.some(r => r.cargo_id === c.id)) CARGOS[c.id] = limpia(c.nombre); });
-  if (soloFolios()) { S.cruce = {}; S.medio = {}; S.unidad = 'PLATON'; await cargarExtra(); return; }
-  const cr = {};
-  from = 0;
-  for (;;) {
-    const { data, error } = await sb.from('platon_cruce').select('cargo_id,folio,cheques').not('cheques', 'is', null).range(from, from + 999);
-    if (error) break;
-    data.forEach(r => cr[r.cargo_id + '-' + r.folio] = r.cheques);
-    if (data.length < 1000) break; from += 1000;
-  }
-  S.cruce = cr;
-  const md = {}; from = 0;
-  for (;;) {
-    const { data, error } = await sb.from('platon_medio').select('mov_id,medio,referencia').range(from, from + 999);
-    if (error) break;
-    data.forEach(r => md[r.mov_id] = r);
-    if (data.length < 1000) break; from += 1000;
-  }
-  S.medio = md;
+  S.chq = (chR && chR.data) || [];
+  S.rows = rows;
+  const hay = new Set(rows.map(r => r.cargo_id));
+  (cg || []).forEach(c => { if (!CARGOS[c.id] && hay.has(c.id)) CARGOS[c.id] = limpia(c.nombre); });
+  if (sol) { S.cruce = {}; S.medio = {}; S.unidad = 'PLATON'; return; }
+  if (cruce) { const cr = {}; cruce.forEach(r => cr[r.cargo_id + '-' + r.folio] = r.cheques); S.cruce = cr; }
+  if (medio) { const md = {}; medio.forEach(r => md[r.mov_id] = r); S.medio = md; }
   S.fp = {}; S.fpc = {}; S.sug = {};
-  try {
-    from = 0;
-    for (;;) {
-      const { data, error } = await sb.from('folio_pago').select('origen_app,clave,medio,cheques,semana_efectivo,monto_efectivo,ref_medio,conflicto').range(from, from + 999);
-      if (error) break;
-      data.forEach(r => { if (r.origen_app === 'CANCUN') S.fpc[r.clave] = r; else S.fp[r.clave] = r; });
-      if (data.length < 1000) break; from += 1000;
-    }
-    const { data: sg } = await sb.from('folio_sugerencias').select('mov_id,tipo_sugerido,referencia,fecha_ref,ref_id,dif_dias,orden').lte('orden', 3).order('orden');
-    (sg || []).forEach(x => (S.sug[x.mov_id] = S.sug[x.mov_id] || []).push(x));
-  } catch (e) { }
-  await cargarExtra();
+  (fpR || []).forEach(r => { if (r.origen_app === 'CANCUN') S.fpc[r.clave] = r; else S.fp[r.clave] = r; });
+  ((sgR && sgR.data) || []).forEach(x => (S.sug[x.mov_id] = S.sug[x.mov_id] || []).push(x));
 }
 async function cargarExtra() {
-  const ar = {}; let from = 0;
-  for (;;) {
-    const { data, error } = await sb.from('platon_archivos').select('id,mov_id,tipo,path,nombre,subido_en').eq('activo', true).range(from, from + 999);
-    if (error) break;
-    data.forEach(a => { (ar[a.mov_id] = ar[a.mov_id] || {})[a.tipo] = a; });
-    if (data.length < 1000) break; from += 1000;
+  const sol = soloFolios();
+  const tArch = pagina(() => sb.from('platon_archivos').select('id,mov_id,tipo,path,nombre,subido_en').eq('activo', true));
+  const tAc = sol ? null : pagina(() => sb.from('platon_acumulado').select('id,semana,mov_id,monto,nota,creado_en').eq('activo', true));
+  const tHoja = sol ? null : sb.from('platon_acumulado_hoja').select('semana,lineas,solicito').then(r => r, () => ({}));
+  const tCn = veCancun() ? cargaCancun() : null;
+  const ar = await tArch;
+  if (ar) { const o = {}; ar.forEach(a => { (o[a.mov_id] = o[a.mov_id] || {})[a.tipo] = a; }); S.arch = o; }
+  if (!sol) {
+    const ac = await tAc; if (ac) S.acum = ac;
+    S.hoja = {}; const h = await tHoja; ((h && h.data) || []).forEach(x => { S.hoja[x.semana] = x; });
   }
-  S.arch = ar;
-  if (!soloFolios()) {
-    let ac = []; from = 0;
-    for (;;) {
-      const { data, error } = await sb.from('platon_acumulado').select('id,semana,mov_id,monto,nota,creado_en').eq('activo', true).range(from, from + 999);
-      if (error) break;
-      ac = ac.concat(data); if (data.length < 1000) break; from += 1000;
-    }
-    S.acum = ac;
-    S.hoja = {};
-    try { const { data } = await sb.from('platon_acumulado_hoja').select('semana,lineas,solicito'); (data || []).forEach(h => { S.hoja[h.semana] = h; }); } catch (e) { }
-  }
-  if (veCancun()) {
-    let cn = []; from = 0;
-    for (;;) {
-      const { data, error } = await sb.from('cancun_movimientos').select('id,fecha,cargo,folio,concepto,monto,pago,tipo,categoria,villa,comentarios,depto,pagado,pagado_nota,cuenta_id').order('fecha', { ascending: false }).range(from, from + 999);
-      if (error) break;
-      cn = cn.concat(data); if (data.length < 1000) break; from += 1000;
-    }
-    S.cancun = cn;
-    S.srv = []; S.villasBaja = [];
-    try {
-      const a = await sb.from('cancun_servicios_estado').select('*').order('limite');
-      if (!a.error) S.srv = a.data || [];
-      const b = await sb.from('cancun_villas_estado').select('*').eq('activa', false).order('villa');
-      if (!b.error) S.villasBaja = b.data || [];
-      const cu = await sb.from('cancun_cuentas').select('id,beneficiario,banco,cuenta,nota').eq('activo', true);
-      if (!cu.error) S.cuentasCn = cu.data || [];
-      S.repCn = {};
-      const pg = async (t, c) => { let o = [], f = 0; for (;;) { const r = await sb.from(t).select(c).range(f, f + 999); if (r.error) return null; o = o.concat(r.data); if (r.data.length < 1000) return o; f += 1000; } };
-      const gc = await pg('cancun_gastos_comp', 'id,id_mov'), rp = await pg('cancun_reparto', 'id_gasto,villa,monto');
-      if (gc && rp) { const m = {}; gc.forEach(g => m[g.id] = g.id_mov); rp.forEach(x => { const k = m[x.id_gasto]; if (k && Number(x.monto) > 0) (S.repCn[k] = S.repCn[k] || []).push({ villa: x.villa, monto: Number(x.monto) }); }); Object.values(S.repCn).forEach(l => l.sort((p, q) => p.villa.localeCompare(q.villa))); }
-    } catch (e) { }
-  }
+  if (tCn) await tCn;
+}
+async function cargaCancun() {
+  try {
+    const [cn, a, b, cu, gc, rp] = await Promise.all([
+      pagina(() => sb.from('cancun_movimientos').select('id,fecha,cargo,folio,concepto,monto,pago,tipo,categoria,villa,comentarios,depto,pagado,pagado_nota,cuenta_id').order('fecha', { ascending: false })),
+      sb.from('cancun_servicios_estado').select('*').order('limite'),
+      sb.from('cancun_villas_estado').select('*').eq('activa', false).order('villa'),
+      sb.from('cancun_cuentas').select('id,beneficiario,banco,cuenta,nota').eq('activo', true),
+      pagina(() => sb.from('cancun_gastos_comp').select('id,id_mov')),
+      pagina(() => sb.from('cancun_reparto').select('id_gasto,villa,monto'))
+    ]);
+    if (cn) S.cancun = cn;
+    S.srv = a.error ? [] : (a.data || []); S.villasBaja = b.error ? [] : (b.data || []);
+    if (!cu.error) S.cuentasCn = cu.data || [];
+    S.repCn = {};
+    if (gc && rp) { const m = {}; gc.forEach(g => m[g.id] = g.id_mov); rp.forEach(x => { const k = m[x.id_gasto]; if (k && Number(x.monto) > 0) (S.repCn[k] = S.repCn[k] || []).push({ villa: x.villa, monto: Number(x.monto) }); }); Object.values(S.repCn).forEach(l => l.sort((p, q) => p.villa.localeCompare(q.villa))); }
+  } catch (e) { }
 }
 const unidades = () => [...new Set(S.rows.map(r => r.unidad))].sort();
 const cargosDe = () => [...new Set(S.rows.filter(r => !S.unidad || r.unidad === S.unidad).map(r => r.cargo_id))].sort((a, b) => (CARGOS[a] || '').localeCompare(CARGOS[b] || ''));
@@ -437,12 +421,14 @@ function vFolios() {
   <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> folios · <b>${money(tot)}</b>${soloFolios() ? '' : ` · <span class="mut">${conCh} con cheque, ${conEf} en efectivo, ${rows.length - conCh - conEf} sin asignar</span>`}</div>
   <div class="row" style="gap:8px">${puedeLigar() && Object.keys(S.lg).filter(k => S.lg[k]).length === 1 ? '<span class="mut">1 folio seleccionado. La selección se conserva al cambiar de cargo.</span>' : ''}${puedeLigar() && Object.keys(S.lg).filter(k => S.lg[k]).length >= 2 ? `<button class="btn gold" id="blig">Ligar seleccionados (${Object.keys(S.lg).filter(k => S.lg[k]).length})</button>` : ''}${(puedeCapturar() || soloFolios()) ? '<button class="btn gold" id="bcap">Nuevo folio</button><button class="btn sec" id="bfoto">Subir foto o archivo</button>' : ''}${(puedeCapturar() || puedeImpPl()) ? '<button class="btn sec" id="bimp">Importar Excel</button>' : ''}<button class="btn sec" id="xl">Descargar Excel</button><button class="btn sec" id="pdf">Descargar PDF</button></div></div>
   ${FF.g ? resumenGrupo(FF.g) : ''}<div class="tw"><table><thead><tr>${puedeLigar() ? '<th></th>' : ''}${S.unidad ? '' : '<th>Unidad</th>'}<th>Cargo</th><th class="n">Folio</th><th>Fecha</th><th>Concepto</th><th class="n">Monto</th>${soloFolios() ? '<th class="n">Total a pagar</th>' : '<th class="n">Total a pagar</th><th>Pago</th>'}${soloFolios() ? '' : '<th>Archivo</th><th>Estado</th>'}<th>Impresión</th>${puedeEdFol() ? '<th></th>' : ''}</tr></thead><tbody>
-  ${rows.map(r => { const ch = S.cruce[r.cargo_id + '-' + r.folio]; return `<tr data-d="${r.id}" style="cursor:pointer">${puedeLigar() ? `<td><input type="checkbox" data-lg="${r.id}" style="width:auto" ${S.lg[r.id] ? 'checked' : ''}></td>` : ''}${S.unidad ? '' : `<td>${nomU(r.unidad)}</td>`}<td>${CARGOS[r.cargo_id]}</td><td class="n folio">${r.folio}</td><td>${r.fecha.split('-').reverse().join('/')}</td><td class="wrap">${esc(r.concepto)}</td><td class="n">${money(r.monto)}</td>
+  ${rows.slice(0, FF.lim || 200).map(r => { const ch = S.cruce[r.cargo_id + '-' + r.folio]; return `<tr data-d="${r.id}" style="cursor:pointer">${puedeLigar() ? `<td><input type="checkbox" data-lg="${r.id}" style="width:auto" ${S.lg[r.id] ? 'checked' : ''}></td>` : ''}${S.unidad ? '' : `<td>${nomU(r.unidad)}</td>`}<td>${CARGOS[r.cargo_id]}</td><td class="n folio">${r.folio}</td><td>${r.fecha.split('-').reverse().join('/')}</td><td class="wrap">${esc(r.concepto)}</td><td class="n">${money(r.monto)}</td>
   ${soloFolios() ? `<td class="n">${r.revisado_en ? money(r.total_pagar != null ? r.total_pagar : r.monto) + (r.sin_factura ? ` <span class="badge b-bad" title="Sin factura">+${Number(r.pct_extra)}%</span>` : '') : ''}</td>` : `<td class="n">${money(r.total_pagar != null ? r.total_pagar : r.monto)}${r.sin_factura ? ` <span class="badge b-bad" title="Sin factura">+${Number(r.pct_extra)}%</span>` : ''}</td>
   <td>${S.fp && S.fp[r.id] ? pagoBadgeFp(S.fp[r.id], S.sug[r.id]) : ch ? `<span class="badge b-ok">Cheque ${esc(ch)}</span>` : (S.medio || {})[r.id] ? `<span class="badge b-ok" title="${esc(S.medio[r.id].referencia || '')}">${S.medio[r.id].medio === 'EFECTIVO' ? 'Efectivo' : esc(S.medio[r.id].medio)}</span>` : '<span class="badge b-no">Sin asignar</span>'}</td>`}
   ${soloFolios() ? '' : `<td>${archBadge(r)}</td><td>${estadoBadge(r)}${r.grupo_id ? ` <a href="#" class="badge b-no" data-g="${r.grupo_id}" title="Folios ligados: ver el grupo">Grupo ${r.grupo_id}</a>` : ''}</td>`}<td style="white-space:nowrap">${!soloFolios() || r.creado_por === S.perfil.id ? `<button class="btn sec" data-pi="${r.id}">Imprimir</button>${soloFolios() ? ` <button class="btn ghost" data-pf="${r.id}">Subir firmado</button>` : ''}` : ''}</td>${puedeEdFol() ? `<td><a href="#" data-an="${r.id}" class="mut">Cancelar</a></td>` : ''}</tr>`; }).join('')}
+  ${rows.length > (FF.lim || 200) ? `<tr><td colspan="14" style="text-align:center"><button class="btn sec" id="bmas">Mostrar más (${Math.min(200, rows.length - (FF.lim || 200))} de ${rows.length - (FF.lim || 200)} restantes)</button></td></tr>` : ''}
   </tbody></table></div>`;
   ligaFiltros(vFolios);
+  { const bm = $('#bmas'); if (bm) bm.onclick = () => { FF.lim = (FF.lim || 200) + 200; vFolios(); }; }
   { const b1 = $('#bcap'), b2 = $('#bfoto'), b3 = $('#bimp');
     if (b1) b1.onclick = () => { preparaCap('EGRESO'); abreSub('folios', 'capturar'); };
     if (b2) b2.onclick = () => { preparaCap('EGRESO'); abreSub('folios', 'capturar'); const fi = $('#fotoin'); if (fi) fi.click(); };
@@ -465,7 +451,7 @@ function vFolios() {
   }; }
   const bind = (id, k) => { const e = $(id); if (e) e.onchange = ev => { FF[k] = ev.target.value; vFolios(); }; };
   bind('#ffp', 'p'); bind('#ffr', 'r'); bind('#ffd', 'd'); bind('#ffh', 'h');
-  $('#ffl').onclick = () => { S.ff = { p: '', r: '', c: '', d: '', h: '', g: 0 }; S.lg = {}; S.q = ''; S.mes = ''; vFolios(); };
+  $('#ffl').onclick = () => { S.ff = { p: '', r: '', c: '', d: '', h: '', g: 0, lim: 0 }; S.lg = {}; S.q = ''; S.mes = ''; vFolios(); };
   const extraF = () => [FF.p && 'Pago: ' + ({ CHEQUE: 'con cheque', EFECTIVO: 'en efectivo', SIN: 'sin asignar' }[FF.p]), FF.c && 'Categoría: ' + FF.c, FF.d && 'Desde: ' + fFecha(FF.d), FF.h && 'Hasta: ' + fFecha(FF.h)].filter(Boolean);
   const nomF = 'folios_' + (S.unidad ? S.unidad + '_' : '') + (S.cargo ? CARGOS[S.cargo] + '_' : '') + hoyISO();
   $('#xl').onclick = () => { const f = rows.map(r => ({ UNIDAD: r.unidad, FECHA: r.fecha, CARGO: CARGOS[r.cargo_id], FOLIO: r.folio, CONCEPTO: r.concepto, MONTO: Number(r.monto), PAGO: pagoTxt(r), GRUPO: r.grupo_id || '', REFERENCIA: ((S.medio || {})[r.id] || {}).referencia || '' })); f.push({ CONCEPTO: 'TOTAL', MONTO: tot }); bajarExcel(nomF + '.xlsx', f); };
@@ -682,8 +668,10 @@ function vCancun() {
   <input id="cq" placeholder="Buscar concepto, villa o folio…" value="${esc(C.q)}">${puedeEdFol() && base.some(esCanc) ? `<label class="mut" style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><input type="checkbox" id="cvc" ${S.cnVerCanc ? 'checked' : ''}>Ver cancelados</label>` : ''}</div>
   <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> registros · <b>${money(tot)}</b>${pendT ? ` <span class="mut">(sin incluir ${money(pendT)} pendiente de pago)</span>` : ''}</div><div class="row"><button class="btn gold" id="cnew">${S.cnIng ? 'Importar pagos' : 'Nuevo folio'}</button><button class="btn sec" id="cpi">Imprimir seleccionados (0)</button><button class="btn sec" id="cx">Descargar Excel</button></div></div>
   <div class="tw"><table><thead><tr><th><input type="checkbox" id="cka" title="Seleccionar todos"></th><th>Fecha</th>${C.tipo === 'INGRESO' ? '' : '<th>Folio</th>'}<th>Cargo</th><th>Concepto</th><th>Categoría</th><th>Villa</th><th class="n">Monto</th><th>Pago y semana</th><th></th></tr></thead><tbody>
-  ${rows.map(r => `<tr${esCanc(r) ? ' style="opacity:.6;text-decoration:line-through"' : ''}><td>${r.tipo === 'EGRESO' && !esCanc(r) ? `<input type="checkbox" class="ckf" data-i="${esc(r.id)}" ${S.cnSel[r.id] ? 'checked' : ''}>` : ''}</td><td>${fFecha(r.fecha || '')}</td>${C.tipo === 'INGRESO' ? '' : `<td class="folio">${esc(r.folio || '')}</td>`}<td>${esc(r.cargo || '')}</td><td class="wrap">${esc(r.concepto || '')}</td><td>${esc(r.categoria || '')}</td><td>${esc(r.villa || '')}${(S.repCn || {})[r.id] ? '<div class="mut" style="font-size:11px;white-space:normal;max-width:380px">' + S.repCn[r.id].map(x => esc(x.villa) + ' ' + money(x.monto)).join(' · ') + '</div>' : ''}</td><td class="n">${money(r.monto)}</td><td>${esCanc(r) ? `<span class="badge b-no" title="${esc(r.pagado_nota)}">Cancelado</span>` : r.pagado === false ? '<span class="badge b-bad">Pendiente de pago</span>' : (S.fpc && S.fpc[r.id] ? pagoBadgeFp(S.fpc[r.id]) : '')}</td><td>${r.tipo === 'EGRESO' && !esCanc(r) ? `<button class="btn sec pim" data-i="${esc(r.id)}">Imprimir</button>` : ''}${puedeEdFol() ? (esCanc(r) ? ` <button class="btn ghost rac" data-i="${esc(r.id)}">Reactivar</button>` : `${r.tipo === 'EGRESO' ? ` <button class="btn ghost edc" data-i="${esc(r.id)}">Editar</button>` : ''} <button class="btn ghost cac" data-i="${esc(r.id)}">Cancelar</button>`) : ''}</td></tr>`).join('') || '<tr><td colspan="10" class="mut">Sin registros con los filtros seleccionados.</td></tr>'}
+  ${rows.slice(0, C.lim || 200).map(r => `<tr${esCanc(r) ? ' style="opacity:.6;text-decoration:line-through"' : ''}><td>${r.tipo === 'EGRESO' && !esCanc(r) ? `<input type="checkbox" class="ckf" data-i="${esc(r.id)}" ${S.cnSel[r.id] ? 'checked' : ''}>` : ''}</td><td>${fFecha(r.fecha || '')}</td>${C.tipo === 'INGRESO' ? '' : `<td class="folio">${esc(r.folio || '')}</td>`}<td>${esc(r.cargo || '')}</td><td class="wrap">${esc(r.concepto || '')}</td><td>${esc(r.categoria || '')}</td><td>${esc(r.villa || '')}${(S.repCn || {})[r.id] ? '<div class="mut" style="font-size:11px;white-space:normal;max-width:380px">' + S.repCn[r.id].map(x => esc(x.villa) + ' ' + money(x.monto)).join(' · ') + '</div>' : ''}</td><td class="n">${money(r.monto)}</td><td>${esCanc(r) ? `<span class="badge b-no" title="${esc(r.pagado_nota)}">Cancelado</span>` : r.pagado === false ? '<span class="badge b-bad">Pendiente de pago</span>' : (S.fpc && S.fpc[r.id] ? pagoBadgeFp(S.fpc[r.id]) : '')}</td><td>${r.tipo === 'EGRESO' && !esCanc(r) ? `<button class="btn sec pim" data-i="${esc(r.id)}">Imprimir</button>` : ''}${puedeEdFol() ? (esCanc(r) ? ` <button class="btn ghost rac" data-i="${esc(r.id)}">Reactivar</button>` : `${r.tipo === 'EGRESO' ? ` <button class="btn ghost edc" data-i="${esc(r.id)}">Editar</button>` : ''} <button class="btn ghost cac" data-i="${esc(r.id)}">Cancelar</button>`) : ''}</td></tr>`).join('') || '<tr><td colspan="10" class="mut">Sin registros con los filtros seleccionados.</td></tr>'}
+  ${rows.length > (C.lim || 200) ? `<tr><td colspan="12" style="text-align:center"><button class="btn sec" id="cmas">Mostrar más (${Math.min(200, rows.length - (C.lim || 200))} de ${rows.length - (C.lim || 200)} restantes)</button></td></tr>` : ''}
   <tr class="tot"><td colspan="7">TOTAL</td><td class="n">${money(tot)}</td><td></td><td></td></tr></tbody></table></div>`;
+  { const cm = $('#cmas'); if (cm) cm.onclick = () => { C.lim = (C.lim || 200) + 200; vCancun(); }; }
   { const ds = $('#dsrv'); if (ds) ds.ontoggle = () => { S.srvAbierto = ds.open; }; }
   document.querySelectorAll('#cs button').forEach(b => b.onclick = () => { C.sub = b.dataset.s; vCancun(); });
   const selN = () => { const n = rows.filter(r => S.cnSel[r.id]).length; $('#cpi').textContent = 'Imprimir seleccionados (' + n + ')'; };
@@ -1905,20 +1893,23 @@ async function vConcil() {
 }
 
 /* Actualización en vivo: revisa cada 45 s (y al volver a la pestaña) si hay folios nuevos */
-let _ref = false;
-async function refrescar() {
+let _ref = false, _tick = 0;
+async function refrescar(forzar) {
   if (_ref || document.hidden || !S.perfil || !['folios', 'ingresos', 'cancun', 'acumulado'].includes(S.tab)) return;
   const ae = document.activeElement; if (ae && /INPUT|SELECT|TEXTAREA/.test(ae.tagName)) return;
   if (document.getElementById('dlg')) return;
   _ref = true;
   try {
     const firma = () => S.rows.length + ':' + S.rows.reduce((m, r) => Math.max(m, r.id), 0);
+    /* Sondeo ligero (2 consultas): solo se recarga todo si hay folios nuevos o cada 3er ciclo / al volver a la pestaña */
+    const sonda = async () => { const [c, m] = await Promise.all([sb.from('platon_movimientos').select('id', { count: 'exact', head: true }).eq('activo', true), sb.from('platon_movimientos').select('id').eq('activo', true).order('id', { ascending: false }).limit(1)]); return c.error || m.error ? null : c.count + ':' + ((m.data[0] || {}).id || 0); };
+    _tick++; if (!forzar && _tick % 3 !== 0) { const ya = await sonda(); if (ya && ya === firma()) return; }
     const antes = firma(); await cargar();
     if (firma() !== antes) { const y = window.scrollY; shell(); window.scrollTo(0, y); }
   } catch (e) { } finally { _ref = false; }
 }
-setInterval(refrescar, 45000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) refrescar(); });
+setInterval(() => refrescar(), 45000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refrescar(true); });
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { });
 boot();
