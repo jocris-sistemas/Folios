@@ -456,9 +456,9 @@ function vFolios() {
   const nomF = 'folios_' + (S.unidad ? S.unidad + '_' : '') + (S.cargo ? CARGOS[S.cargo] + '_' : '') + hoyISO();
   $('#xl').onclick = () => { const f = rows.map(r => ({ UNIDAD: r.unidad, FECHA: r.fecha, CARGO: CARGOS[r.cargo_id], FOLIO: r.folio, CONCEPTO: r.concepto, MONTO: Number(r.monto), PAGO: pagoTxt(r), GRUPO: r.grupo_id || '', REFERENCIA: ((S.medio || {})[r.id] || {}).referencia || '' })); f.push({ CONCEPTO: 'TOTAL', MONTO: tot }); bajarExcel(nomF + '.xlsx', f); };
   $('#pdf').onclick = () => {
-    const cols = [...(S.unidad ? [] : [{ t: 'Unidad', w: 1 }]), { t: 'Cargo', w: 1.2 }, { t: 'Folio', w: .7, n: 1 }, { t: 'Fecha', w: 1 }, { t: 'Concepto', w: 5 }, { t: 'Monto', w: 1.4, n: 1 }, { t: 'Pago', w: 1.6 }];
-    const filas = rows.map(r => [...(S.unidad ? [] : [nomU(r.unidad)]), CARGOS[r.cargo_id], r.folio, fFecha(r.fecha), r.concepto, money(r.monto), pagoTxt(r)]);
-    const pie = cols.map((c, i) => i === cols.length - 3 ? 'TOTAL' : i === cols.length - 2 ? money(tot) : '');
+    const cols = [...(S.unidad ? [] : [{ t: 'Unidad', w: 1 }]), { t: 'Cargo', w: 1.2 }, { t: 'Folio', w: .7, n: 1 }, { t: 'Fecha', w: 1 }, { t: 'Concepto', w: 6 }, { t: 'Monto', w: 1.4, n: 1 }];
+    const filas = rows.map(r => [...(S.unidad ? [] : [nomU(r.unidad)]), CARGOS[r.cargo_id], r.folio, fFecha(r.fecha), r.concepto, money(r.monto)]);
+    const pie = cols.map((c, i) => i === cols.length - 2 ? 'TOTAL' : i === cols.length - 1 ? money(tot) : '');
     bajarPDF(nomF + '.pdf', 'Folios (' + rows.length + ')', txtFiltros(extraF()), cols, filas, pie);
   };
   document.querySelectorAll('[data-an]').forEach(a => a.onclick = async e => {
