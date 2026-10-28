@@ -1738,9 +1738,8 @@ async function vConcil() {
     $('#m').innerHTML = '<div class="msg info">Cargando…</div>';
     try { await cargarPagos(); } catch (e) { return $('#m').innerHTML = `<div class="msg err">No fue posible cargar la información: ${esc(e.message || e)}</div>`; }
   }
-  const banco = !!P.dep, vistas = [['resumen', 'Resumen mensual'], ['facturas', 'Facturas']];
+  const banco = !!P.dep, vistas = [['resumen', 'Resumen mensual']];
   if (banco) vistas.push(['depositos', 'Depósitos del banco']);
-  if (puedeCapturar() || puedeImpPl()) vistas.push(['subir', 'Subir archivo PAGOS']);
   if (!vistas.some(v => v[0] === P.vista)) P.vista = 'resumen';
   const lig = ligadoPor(), nPend = P.pagos.filter(p => !p.deposito_id).length;
   const filtroC = `<div class="chips" style="margin-bottom:10px">${[[0, 'Todos'], ...ingIds().map(c => [c, CARGOS[c]])].map(c => `<button class="chip ${P.cargo === c[0] ? 'on' : ''}" data-pc="${c[0]}">${c[1]}</button>`).join('')}</div>`;
