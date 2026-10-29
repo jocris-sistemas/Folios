@@ -1007,9 +1007,9 @@ function vIngresos() {
 /* ---------- Depósitos Excer: importar CSV y enviar a clasificar ---------- */
 const puedeVerDep = () => !!(S.perfil && !S.perfil.solo_folios && (S.perfil.rol === 'administrador' || S.perfil.puede_archivos));
 const puedeClas = () => !!(S.perfil && S.perfil.solo_folios && S.perfil.puede_clasificar_ingresos);
-const DX = { rows: null, vista: 'sin', mes: '', q: '', sel: new Set(), ok: '', err: '' };   // administración (Pedro)
-const PC = { rows: null, vista: 'pend', mes: '', q: '', sel: new Set(), ok: '', err: '' };  // clasificador (Administración Excering)
-const ING_COLS = 'id,fecha,monto,pagador,concepto,categoria,origen,nota,enviado_en,devuelto_en';
+const DX = { rows: null, vista: 'sin', mes: '', q: '', cta: '', form: false, sel: new Set(), ok: '', err: '' };   // administración (Pedro)
+const PC = { rows: null, vista: 'pend', mes: '', q: '', cta: '', form: false, sel: new Set(), ok: '', err: '' };  // clasificador (Administración Excering)
+const ING_COLS = 'id,cuenta,fecha,monto,pagador,concepto,categoria,origen,nota,enviado_en,devuelto_en';
 async function ingCargarTodo() {
   let all = [], from = 0;
   for (;;) {
@@ -1071,8 +1071,8 @@ const fdmI = f => f ? f.split('-').reverse().join('/') : '';
 const fdtI = t => t ? fdmI(String(t).slice(0, 10)) : '';
 function ingTabla(rows, sel, conCk, estadoTxt) {
   const ids = rows.filter(conCk).map(r => r.id), todos = ids.length && ids.every(i => sel.has(i));
-  return `<div class="tw"><table><thead><tr><th>${ids.length ? `<input type="checkbox" id="ick" ${todos ? 'checked' : ''} title="Seleccionar todos">` : ''}</th><th>Fecha</th><th>Pagador</th><th>Concepto</th><th class="n">Monto</th><th>Estado</th></tr></thead><tbody>
-  ${rows.slice(0, 300).map(r => `<tr><td>${conCk(r) ? `<input type="checkbox" class="ick" data-i="${r.id}" ${sel.has(r.id) ? 'checked' : ''}>` : ''}</td><td>${fdmI(r.fecha)}</td><td class="wrap">${esc(r.pagador || '')}</td><td class="wrap">${esc(r.concepto || '')}${r.devuelto_en && !r.enviado_en && !r.categoria ? `<div class="mut" style="font-size:12px">${esc((r.nota || '').split(' | Devuelto: ')[1] ? 'Devuelto: ' + (r.nota || '').split(' | Devuelto: ')[1] : 'Devuelto sin clasificar')}</div>` : ''}</td><td class="n">${money(r.monto)}</td><td>${estadoTxt(r)}</td></tr>`).join('')}
+  return `<div class="tw"><table><thead><tr><th>${ids.length ? `<input type="checkbox" id="ick" ${todos ? 'checked' : ''} title="Seleccionar todos">` : ''}</th><th>Fecha</th><th>Cuenta</th><th>Pagador</th><th>Concepto</th><th class="n">Monto</th><th>Estado</th></tr></thead><tbody>
+  ${rows.slice(0, 300).map(r => `<tr><td>${conCk(r) ? `<input type="checkbox" class="ick" data-i="${r.id}" ${sel.has(r.id) ? 'checked' : ''}>` : ''}</td><td>${fdmI(r.fecha)}</td><td class="wrap">${esc(r.cuenta || '')}</td><td class="wrap">${esc(r.pagador || '')}</td><td class="wrap">${esc(r.concepto || '')}${r.devuelto_en && !r.enviado_en && !r.categoria ? `<div class="mut" style="font-size:12px">${esc((r.nota || '').split(' | Devuelto: ')[1] ? 'Devuelto: ' + (r.nota || '').split(' | Devuelto: ')[1] : 'Devuelto sin clasificar')}</div>` : ''}</td><td class="n">${money(r.monto)}</td><td>${estadoTxt(r)}</td></tr>`).join('')}
   </tbody></table></div>${rows.length > 300 ? `<p class="mut" style="font-size:12.5px">Se muestran 300 de ${rows.length}; usar los filtros para acotar.</p>` : ''}`;
 }
 function ingLigaSel(sel, rows, conCk, repinta) {
@@ -1081,28 +1081,67 @@ function ingLigaSel(sel, rows, conCk, repinta) {
 }
 const MESES_I = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 const mesesOpcI = (rows, actual) => { const s = [...new Set(rows.map(r => String(r.fecha).slice(0, 7)))].sort().reverse(); return `<select id="imes"><option value="">Todos los meses</option>${s.map(m => `<option value="${m}" ${actual === m ? 'selected' : ''}>${MESES_I[+m.slice(5) - 1]} ${m.slice(0, 4)}</option>`).join('')}</select>`; };
+
+const cuentasOpcI = (rows, actual) => { const s = [...new Set(rows.map(r => r.cuenta).filter(Boolean))].sort(); return `<select id="icta"><option value="">Todas las cuentas</option>${s.map(c => `<option value="${esc(c)}" ${actual === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>`; };
+function ingFormHTML(rows) {
+  const cs = [...new Set(rows.map(r => r.cuenta).filter(Boolean))].sort();
+  return `<div class="card" style="border-color:var(--gold);margin-bottom:12px"><b>Nuevo depósito de otro banco</b>
+    <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:8px">
+      <div><label class="mut" style="font-size:12px">Cuenta o banco</label><input id="fcta" list="fctal" placeholder="Ej. Santander" style="width:190px"><datalist id="fctal">${cs.map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>
+      <div><label class="mut" style="font-size:12px">Fecha</label><input id="ffec" type="date" value="${hoyISO()}"></div>
+      <div><label class="mut" style="font-size:12px">Monto</label><input id="fmon" inputmode="decimal" placeholder="0.00" style="width:120px"></div>
+      <div><label class="mut" style="font-size:12px">Pagador</label><input id="fpag" placeholder="Nombre de quien deposita" style="width:220px"></div>
+      <div><label class="mut" style="font-size:12px">Concepto</label><input id="fcon" placeholder="Referencia o concepto" style="width:220px"></div>
+      <div><label class="mut" style="font-size:12px">Asignar a</label><select id="fcat"><option value="RENE">René</option><option value="EGBERT">Egbert</option><option value="OMAR">Omar</option></select></div>
+    </div>
+    <div class="row" style="gap:8px;margin-top:10px"><button class="btn gold" id="fgo">Guardar depósito</button><button class="btn sec" id="fcan">Cancelar</button></div><div id="fer" class="msg err" style="display:none;margin-top:8px"></div></div>`;
+}
+function ingFormLiga(ctx, repinta, recarga) {
+  const b = $('#fcan'); if (b) b.onclick = () => { ctx.form = false; repinta(); };
+  const g = $('#fgo'); if (!g) return;
+  g.onclick = async () => {
+    const cuenta = $('#fcta').value.trim(), fecha = $('#ffec').value, monto = Number(String($('#fmon').value).replace(/[$,\s]/g, '')), pagador = $('#fpag').value.trim(), concepto = $('#fcon').value.trim(), cat = $('#fcat').value;
+    const falla = t => { const e = $('#fer'); if (e) { e.textContent = t; e.style.display = 'block'; } };
+    if (!cuenta) return falla('Se requiere indicar la cuenta o banco.');
+    if (!fecha) return falla('Se requiere la fecha del depósito.');
+    if (!(monto > 0)) return falla('Se requiere un monto mayor a cero.');
+    if (!pagador && !concepto) return falla('Se requiere el pagador o el concepto.');
+    const llama = forzar => sb.rpc('ingresos_alta_manual', { p_cuenta: cuenta, p_fecha: fecha, p_monto: monto, p_pagador: pagador || null, p_concepto: concepto || null, p_cat: cat, p_forzar: forzar });
+    let { data, error } = await llama(false);
+    if (error) return falla(error.message);
+    if (data && data.duplicado) {
+      if (!confirm('Ya existe un depósito con la misma cuenta, fecha, monto y pagador. ¿Guardar de todos modos?')) return;
+      ({ data, error } = await llama(true)); if (error) return falla(error.message);
+    }
+    ctx.form = false; ctx.err = ''; ctx.ok = `Depósito de ${money(monto)} guardado en ${cuenta} y asignado a ${cat}.`;
+    try { await recarga(); } catch (e) { ctx.err = e.message; }
+    repinta();
+  };
+}
 async function vDepExcer() {
   if (!DX.rows) {
     $('#m').innerHTML = '<div class="msg info">Cargando…</div>';
     try { DX.rows = await ingCargarTodo(); } catch (e) { return $('#m').innerHTML = `<div class="msg err">No fue posible cargar los depósitos: ${esc(e.message || e)}</div>`; }
   }
   const cnt = k => DX.rows.filter(r => ingEstado(r) === k).length, q = DX.q.toLowerCase();
-  const rows = DX.rows.filter(r => (DX.vista === 'todos' || ingEstado(r) === DX.vista) && (!DX.mes || String(r.fecha).slice(0, 7) === DX.mes) && (!q || ((r.pagador || '') + ' ' + (r.concepto || '')).toLowerCase().includes(q)));
-  const tot = rows.reduce((s, r) => s + r.monto, 0), conCk = r => ingEstado(r) !== 'clas';
-  for (const i of [...DX.sel]) { const r = DX.rows.find(x => x.id === i); if (!r || !conCk(r)) DX.sel.delete(i); }
+  const rows = DX.rows.filter(r => (DX.vista === 'todos' || ingEstado(r) === DX.vista) && (!DX.mes || String(r.fecha).slice(0, 7) === DX.mes) && (!DX.cta || r.cuenta === DX.cta) && (!q || ((r.pagador || '') + ' ' + (r.concepto || '')).toLowerCase().includes(q)));
+  const tot = rows.reduce((s, r) => s + r.monto, 0), conSel = r => (DX.vista === 'sin' && ingEstado(r) === 'sin') || (DX.vista === 'env' && ingEstado(r) === 'env') || (DX.vista === 'clas' && ['CANCUN', 'OTROS'].includes(r.categoria));
+  for (const i of [...DX.sel]) { const r = DX.rows.find(x => x.id === i); if (!r || !conSel(r)) DX.sel.delete(i); }
   const chip = (k, t, n) => `<button class="chip ${DX.vista === k ? 'on' : ''}" data-dv="${k}">${t}${n != null ? ` (${n})` : ''}</button>`;
   $('#m').innerHTML = `<div class="row" style="margin-bottom:10px;justify-content:space-between;flex-wrap:wrap;gap:8px"><div class="mut" style="font-size:13px">Depósitos de la cuenta Excer (Afirme). Lo enviado queda visible para Administración Excering, que solo clasifica los de René, Egbert y Omar.</div>
-    <label class="btn gold" style="cursor:pointer">Importar CSV Excer<input type="file" id="dxf" accept=".csv,text/csv" style="display:none"></label></div>
+    <div class="row" style="gap:8px"><button class="btn sec" id="inew">Nuevo depósito (otro banco)</button><label class="btn gold" style="cursor:pointer">Importar CSV Excer<input type="file" id="dxf" accept=".csv,text/csv" style="display:none"></label></div></div>${DX.form ? ingFormHTML(DX.rows) : ''}
   <div id="dxst">${DX.err ? `<div class="msg err">${esc(DX.err)}</div>` : DX.ok ? `<div class="msg ok">${esc(DX.ok)}</div>` : ''}</div>
   <div class="chips" style="margin-bottom:10px">${chip('sin', 'Sin enviar', cnt('sin'))}${chip('env', 'Enviados a clasificar', cnt('env'))}${chip('clas', 'Clasificados', cnt('clas'))}${chip('todos', 'Todos', null)}</div>
-  <div class="sticky-f">${mesesOpcI(DX.rows, DX.mes)}<input id="iq" placeholder="Buscar pagador o concepto…" value="${esc(DX.q)}"></div>
+  <div class="sticky-f">${mesesOpcI(DX.rows, DX.mes)}${cuentasOpcI(DX.rows, DX.cta)}<input id="iq" placeholder="Buscar pagador o concepto…" value="${esc(DX.q)}"></div>
   <div class="row" style="margin-bottom:8px;justify-content:space-between;flex-wrap:wrap;gap:8px"><div><b>${rows.length}</b> depósitos · <b class="pos">${money(tot)}</b></div>
-  <div class="row" style="gap:8px">${DX.vista === 'sin' ? '<button class="btn gold" id="ienv">Enviar a clasificar (<span id="nsel">' + DX.sel.size + '</span>)</button>' : DX.vista === 'env' ? '<button class="btn sec" id="iquita">Quitar envío (<span id="nsel">' + DX.sel.size + '</span>)</button>' : ''}</div></div>
-  ${ingTabla(rows, DX.sel, r => conCk(r) && ((DX.vista === 'sin' && ingEstado(r) === 'sin') || (DX.vista === 'env' && ingEstado(r) === 'env')), r => { const e = ingEstado(r); return e === 'clas' ? `<span class="badge b-ok">${esc(r.categoria)}</span>` : e === 'env' ? `<span class="badge b-no">Enviado ${fdtI(r.enviado_en)}</span>` : r.devuelto_en ? '<span class="badge b-no">Devuelto</span>' : '<span class="mut">Sin enviar</span>'; })}`;
-  const conSel = r => (DX.vista === 'sin' && ingEstado(r) === 'sin') || (DX.vista === 'env' && ingEstado(r) === 'env');
+  <div class="row" style="gap:8px">${DX.vista === 'sin' ? '<button class="btn gold" id="ienv">Enviar a clasificar (<span id="nsel">' + DX.sel.size + '</span>)</button>' : DX.vista === 'env' ? '<button class="btn sec" id="iquita">Quitar envío (<span id="nsel">' + DX.sel.size + '</span>)</button>' : '<span class="mut" style="font-size:12.5px">Seleccionados: <b id="nsel">' + DX.sel.size + '</b></span>'}${DX.vista === 'sin' || DX.vista === 'env' ? '<button class="btn sec" data-dc="CANCUN">Cancún</button><button class="btn sec" data-dc="OTROS">Otros</button>' : DX.vista === 'clas' ? '<button class="btn sec" id="idcq">Quitar clasificación</button>' : ''}</div></div>
+  ${ingTabla(rows, DX.sel, conSel, r => { const e = ingEstado(r); return e === 'clas' ? `<span class="badge b-ok">${esc(r.categoria)}</span>` : e === 'env' ? `<span class="badge b-no">Enviado ${fdtI(r.enviado_en)}</span>` : r.devuelto_en ? '<span class="badge b-no">Devuelto</span>' : '<span class="mut">Sin enviar</span>'; })}`;
   ingLigaSel(DX.sel, rows, conSel, vDepExcer);
   document.querySelectorAll('[data-dv]').forEach(b => b.onclick = () => { DX.vista = b.dataset.dv; DX.sel.clear(); DX.ok = ''; DX.err = ''; vDepExcer(); });
   $('#imes').onchange = e => { DX.mes = e.target.value; vDepExcer(); };
+  $('#icta').onchange = e => { DX.cta = e.target.value; vDepExcer(); };
+  $('#inew').onclick = () => { DX.form = !DX.form; DX.ok = ''; DX.err = ''; vDepExcer(); };
+  ingFormLiga(DX, vDepExcer, async () => { DX.rows = await ingCargarTodo(); });
   $('#iq').oninput = e => { DX.q = e.target.value; clearTimeout(vDepExcer.t); vDepExcer.t = setTimeout(() => { vDepExcer().then(() => { const n = $('#iq'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } }); }, 250); };
   $('#dxf').onchange = e => { const f = e.target.files[0]; if (f) dxImportar(f); };
   const mover = async enviar => {
@@ -1112,6 +1151,15 @@ async function vDepExcer() {
     DX.err = ''; DX.ok = enviar ? `${data.actualizados} depósito${data.actualizados === 1 ? '' : 's'} enviado${data.actualizados === 1 ? '' : 's'} a clasificar.` : `Envío retirado en ${data.actualizados} depósito${data.actualizados === 1 ? '' : 's'}.`;
     DX.sel.clear(); DX.rows = await ingCargarTodo(); vDepExcer();
   };
+  const clasif = async cat => {
+    const ids = [...DX.sel]; if (!ids.length) { DX.err = 'Se requiere seleccionar al menos un depósito.'; DX.ok = ''; return vDepExcer(); }
+    const { data, error } = await sb.rpc('ingresos_clasificar', { p_ids: ids, p_cat: cat, p_regla: false });
+    if (error) { DX.err = error.message; DX.ok = ''; return vDepExcer(); }
+    DX.err = ''; DX.ok = cat ? `${data.actualizados} depósito${data.actualizados === 1 ? '' : 's'} clasificado${data.actualizados === 1 ? '' : 's'} como ${cat === 'CANCUN' ? 'Cancún' : 'Otros'}.` : `Clasificación retirada en ${data.actualizados} depósito${data.actualizados === 1 ? '' : 's'}.`;
+    DX.sel.clear(); DX.rows = await ingCargarTodo(); vDepExcer();
+  };
+  document.querySelectorAll('[data-dc]').forEach(b => b.onclick = () => clasif(b.dataset.dc));
+  if ($('#idcq')) $('#idcq').onclick = () => clasif(null);
   if ($('#ienv')) $('#ienv').onclick = () => mover(true);
   if ($('#iquita')) $('#iquita').onclick = () => mover(false);
 }
@@ -1122,20 +1170,24 @@ async function vPorClasificar() {
     try { await cargar(); } catch (e) { return $('#m').innerHTML = `<div class="msg err">No fue posible cargar los depósitos: ${esc(e.message || e)}</div>`; }
   }
   const q = PC.q.toLowerCase(), nPend = PC.rows.filter(r => !r.categoria).length, nCl = PC.rows.length - nPend;
-  const rows = PC.rows.filter(r => (PC.vista === 'pend' ? !r.categoria : !!r.categoria) && (!PC.mes || String(r.fecha).slice(0, 7) === PC.mes) && (!q || ((r.pagador || '') + ' ' + (r.concepto || '')).toLowerCase().includes(q)));
+  const rows = PC.rows.filter(r => (PC.vista === 'pend' ? !r.categoria : !!r.categoria) && (!PC.mes || String(r.fecha).slice(0, 7) === PC.mes) && (!PC.cta || r.cuenta === PC.cta) && (!q || ((r.pagador || '') + ' ' + (r.concepto || '')).toLowerCase().includes(q)));
   const tot = rows.reduce((s, r) => s + r.monto, 0);
   for (const i of [...PC.sel]) if (!rows.some(x => x.id === i)) PC.sel.delete(i);
   const chip = (k, t, n) => `<button class="chip ${PC.vista === k ? 'on' : ''}" data-pv2="${k}">${t} (${n})</button>`;
-  $('#m').innerHTML = `<div class="mut" style="font-size:13px;margin-bottom:10px">Depósitos enviados para clasificar. Se asigna cada uno a René, Egbert u Omar; los que no corresponden a ninguno se devuelven.</div>
+  $('#m').innerHTML = `<div class="mut" style="font-size:13px;margin-bottom:10px">Depósitos enviados para clasificar. Se asigna cada uno a René, Egbert u Omar; los que no corresponden a ninguno se devuelven. Los depósitos de otros bancos se capturan con «Nuevo depósito».</div>
+  <div style="margin-bottom:10px"><button class="btn gold" id="inew">Nuevo depósito (otro banco)</button></div>${PC.form ? ingFormHTML(PC.rows) : ''}
   <div id="dxst">${PC.err ? `<div class="msg err">${esc(PC.err)}</div>` : PC.ok ? `<div class="msg ok">${esc(PC.ok)}</div>` : ''}</div>
   <div class="chips" style="margin-bottom:10px">${chip('pend', 'Por clasificar', nPend)}${chip('clas', 'Clasificados', nCl)}</div>
-  <div class="sticky-f">${mesesOpcI(PC.rows, PC.mes)}<input id="iq" placeholder="Buscar pagador o concepto…" value="${esc(PC.q)}"></div>
+  <div class="sticky-f">${mesesOpcI(PC.rows, PC.mes)}${cuentasOpcI(PC.rows, PC.cta)}<input id="iq" placeholder="Buscar pagador o concepto…" value="${esc(PC.q)}"></div>
   <div class="row" style="margin-bottom:8px;justify-content:space-between;flex-wrap:wrap;gap:8px"><div><b>${rows.length}</b> depósitos · <b class="pos">${money(tot)}</b> · seleccionados: <b id="nsel">${PC.sel.size}</b></div>
   <div class="row" style="gap:8px;flex-wrap:wrap">${PC.vista === 'pend' ? '<button class="btn gold" data-ca="RENE">René</button><button class="btn gold" data-ca="EGBERT">Egbert</button><button class="btn gold" data-ca="OMAR">Omar</button><button class="btn sec" id="idev">Devolver</button>' : '<button class="btn sec" id="iquitac">Quitar clasificación</button>'}</div></div>
   ${ingTabla(rows, PC.sel, () => true, r => r.categoria ? `<span class="badge b-ok">${esc(r.categoria)}</span>` : '<span class="badge b-no">Por clasificar</span>')}`;
   ingLigaSel(PC.sel, rows, () => true, vPorClasificar);
   document.querySelectorAll('[data-pv2]').forEach(b => b.onclick = () => { PC.vista = b.dataset.pv2; PC.sel.clear(); PC.ok = ''; PC.err = ''; vPorClasificar(); });
   $('#imes').onchange = e => { PC.mes = e.target.value; vPorClasificar(); };
+  $('#icta').onchange = e => { PC.cta = e.target.value; vPorClasificar(); };
+  $('#inew').onclick = () => { PC.form = !PC.form; PC.ok = ''; PC.err = ''; vPorClasificar(); };
+  ingFormLiga(PC, vPorClasificar, cargar);
   $('#iq').oninput = e => { PC.q = e.target.value; clearTimeout(vPorClasificar.t); vPorClasificar.t = setTimeout(() => { vPorClasificar().then(() => { const n = $('#iq'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } }); }, 250); };
   const termina = async (msg, error) => { if (error) { PC.err = error.message; PC.ok = ''; return vPorClasificar(); } PC.err = ''; PC.ok = msg; PC.sel.clear(); try { await cargar(); } catch (e) { PC.err = e.message; } vPorClasificar(); };
   const ids = () => [...PC.sel];
