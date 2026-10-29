@@ -236,7 +236,7 @@ async function boot() {
 /* ---------- estructura ---------- */
 const pendRev = () => soloFolios() ? [] : S.rows.filter(r => r.tipo === 'EGRESO' && r.unidad === 'PLATON' && !r.revisado_en && !esPasado(r));
 function shell() {
-  const tabs = soloFolios() ? [['folios', 'Mis folios'], ...(puedeImpPl() ? [['ingresos', 'Ingresos']] : [])] : [['folios', 'Folios'], ['ingresos', 'Ingresos']];
+  const tabs = soloFolios() ? [['folios', 'Mis folios'], ...(puedeImpPl() ? [['ingresos', 'Ingresos']] : []), ...(puedeClas() ? [['porclas', 'Por clasificar']] : [])] : [['folios', 'Folios'], ['ingresos', 'Ingresos']];
   if (veCancun()) tabs.push(['cancun', 'Cancún']);
   if (veAcumulado()) tabs.push(['acumulado', 'Acumulado semanal']);
   $('#app').innerHTML = `<header><div class="top"><h1>Folios<small>${soloFolios() ? 'Platón' : 'egresos e ingresos'}</small></h1>
@@ -249,11 +249,13 @@ function shell() {
   $('#out').onclick = async e => { e.preventDefault(); await sb.auth.signOut(); location.reload(); };
   if (S.tab === 'resumen') S.tab = 'folios';
   { const us = unidades(); if (!us.includes(S.unidad)) { S.unidad = us.includes('PLATON') ? 'PLATON' : (us[0] || ''); S.cargo = 0; } }
-  if (soloFolios() && !['folios', 'capturar', ...(puedeImpPl() ? ['ingresos', 'importar', 'concil'] : [])].includes(S.tab)) S.tab = 'folios';
+  if (soloFolios() && !['folios', 'capturar', ...(puedeImpPl() ? ['ingresos', 'importar', 'concil'] : []), ...(puedeClas() ? ['porclas'] : [])].includes(S.tab)) S.tab = 'folios';
+  if (S.tab === 'depexcer' && !puedeVerDep()) S.tab = 'folios';
+  if (S.tab === 'porclas' && !puedeClas()) S.tab = 'folios';
   if (S.tab === 'cancun' && S.cnIng) { S.cnIng = false; S.cn.tipo = 'EGRESO'; }
   if (S.tab === 'cancun' && !veCancun()) S.tab = 'folios';
   if (S.tab === 'acumulado' && !veAcumulado()) S.tab = 'folios';
-  ({ resumen: vResumen, folios: vFolios, ingresos: soloFolios() ? vConcil : vIngresos, concil: vConcil, capturar: vCapturar, importar: vImportar, cancun: vCancun, acumulado: vAcumulado })[S.tab]();
+  ({ resumen: vResumen, folios: vFolios, ingresos: soloFolios() ? vConcil : vIngresos, concil: vConcil, capturar: vCapturar, importar: vImportar, cancun: vCancun, acumulado: vAcumulado, depexcer: vDepExcer, porclas: vPorClasificar })[S.tab]();
   if (S.det) abreDetalle(S.det);
 }
 function fijaCargo() { if (S.cargo === -1 && S.unidad === 'JOCRIS' && veCancun()) return; const cs = cargosDe(); if (!cs.includes(S.cargo)) S.cargo = cs.includes(CARGO_ID['EGBERT']) ? CARGO_ID['EGBERT'] : (cs[0] || 0); }
@@ -977,12 +979,13 @@ function vIngresos() {
   const rows = filtradas('INGRESO').sort((a, b) => b.fecha.localeCompare(a.fecha));
   const tot = rows.reduce((s, r) => s + Number(r.monto), 0);
   $('#m').innerHTML = `${chipsIng()}${filtrosHTML(true, false, { sinUnidades: true, sinCancun: true })}
-  <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> ingresos · <b class="pos">${money(tot)}</b></div><div class="row" style="gap:8px">${puedeCapturar() ? '<button class="btn gold" id="bning">Nuevo ingreso</button>' : ''}<button class="btn sec" id="xl">Descargar Excel</button><button class="btn sec" id="pdf">Descargar PDF</button></div></div>
+  <div class="row" style="margin-bottom:8px;justify-content:space-between"><div><b>${rows.length}</b> ingresos · <b class="pos">${money(tot)}</b></div><div class="row" style="gap:8px">${puedeCapturar() ? '<button class="btn gold" id="bning">Nuevo ingreso</button>' : ''}${puedeVerDep() ? '<button class="btn sec" id="bdepx">Depósitos Excer</button>' : ''}<button class="btn sec" id="xl">Descargar Excel</button><button class="btn sec" id="pdf">Descargar PDF</button></div></div>
   <div class="tw"><table><thead><tr>${S.unidad ? '' : '<th>Unidad</th>'}<th>Fecha</th><th>Cargo</th><th>Cliente</th><th class="n">Monto</th>${puedeEdFol() ? '<th></th>' : ''}</tr></thead><tbody>
   ${rows.map(r => `<tr>${S.unidad ? '' : `<td>${nomU(r.unidad)}</td>`}<td>${r.fecha.split('-').reverse().join('/')}</td><td>${CARGOS[r.cargo_id]}</td><td class="wrap">${esc(r.concepto)}</td><td class="n">${money(r.monto)}</td>${puedeEdFol() ? `<td><a href="#" data-an="${r.id}" class="mut">Cancelar</a></td>` : ''}</tr>`).join('')}
   </tbody></table></div>`;
   ligaFiltros(vIngresos);
   ligaChipsIng();
+  { const bd = $('#bdepx'); if (bd) bd.onclick = () => abreSub('ingresos', 'depexcer'); }
   { const b1 = $('#bning'), b2 = $('#bimpg'), b3 = $('#bimpx');
     if (b1) b1.onclick = () => { preparaCap('INGRESO'); abreSub('ingresos', 'capturar'); };
     if (b2) b2.onclick = () => { P.vista = 'subir'; abreSub('ingresos', 'concil'); };
@@ -999,6 +1002,147 @@ function vIngresos() {
     const { error } = await sb.rpc('platon_anular', { p_id: +a.dataset.an, p_nota: nota }); if (error) return alert(error.message);
     await cargar(); vIngresos();
   });
+}
+
+/* ---------- Depósitos Excer: importar CSV y enviar a clasificar ---------- */
+const puedeVerDep = () => !!(S.perfil && !S.perfil.solo_folios && (S.perfil.rol === 'administrador' || S.perfil.puede_archivos));
+const puedeClas = () => !!(S.perfil && S.perfil.solo_folios && S.perfil.puede_clasificar_ingresos);
+const DX = { rows: null, vista: 'sin', mes: '', q: '', sel: new Set(), ok: '', err: '' };   // administración (Pedro)
+const PC = { rows: null, vista: 'pend', mes: '', q: '', sel: new Set(), ok: '', err: '' };  // clasificador (Administración Excering)
+const ING_COLS = 'id,fecha,monto,pagador,concepto,categoria,origen,nota,enviado_en,devuelto_en';
+async function ingCargarTodo() {
+  let all = [], from = 0;
+  for (;;) {
+    const { data, error } = await sb.from('ingresos').select(ING_COLS).order('fecha', { ascending: false }).order('id').range(from, from + 999);
+    if (error) throw error;
+    all = all.concat(data.map(x => ({ ...x, monto: Number(x.monto) }))); if (data.length < 1000) break; from += 1000;
+  }
+  return all;
+}
+function csvFilasD(txt) {
+  const linea = (txt.split(/\r?\n/).find(l => l.trim()) || '');
+  const sep = (linea.match(/;/g) || []).length > (linea.match(/,/g) || []).length ? ';' : ((linea.match(/\t/g) || []).length > (linea.match(/,/g) || []).length ? '\t' : ',');
+  const out = []; let row = [], cell = '', q = false;
+  for (let i = 0; i < txt.length; i++) {
+    const ch = txt[i];
+    if (q) { if (ch === '"') { if (txt[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += ch; continue; }
+    if (ch === '"') q = true;
+    else if (ch === sep) { row.push(cell); cell = ''; }
+    else if (ch === '\n' || ch === '\r') { if (ch === '\r' && txt[i + 1] === '\n') i++; row.push(cell); cell = ''; if (row.some(x => x.trim() !== '')) out.push(row); row = []; }
+    else cell += ch;
+  }
+  row.push(cell); if (row.some(x => x.trim() !== '')) out.push(row);
+  return out;
+}
+const normColD = s => String(s || '').normalize('NFD').replace(/[^\x00-\x7F]/g, '').toLowerCase().replace(/[^a-z]/g, '');
+async function dxImportar(file) {
+  DX.ok = ''; DX.err = '';
+  try {
+    $('#dxst').innerHTML = '<div class="msg info">Leyendo el archivo…</div>';
+    const buf = new Uint8Array(await file.arrayBuffer()); let txt;
+    try { txt = new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch (er) { txt = new TextDecoder('windows-1252').decode(buf); }
+    const filas = csvFilasD(txt), h = (filas[0] || []).map(normColD);
+    const iC = h.indexOf('concepto'), iF = h.findIndex(x => x.startsWith('fecha')), iA = h.indexOf('abono');
+    if (iC < 0 || iF < 0 || iA < 0) throw new Error('Formato no reconocido. Se requiere el CSV de movimientos de Afirme (columnas Concepto, Fecha y Abono).');
+    const vistos = {}, out = [];
+    for (const r of filas.slice(1)) {
+      const raw = String(r[iC] ?? ''), monto = Number(String(r[iA] ?? '').replace(/[$,\s]/g, ''));
+      if (!(monto > 0) || /^(VEN INV|VENCIMIENTO)/i.test(raw.trim())) continue;
+      const m = String(r[iF] ?? '').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/); if (!m) continue;
+      const fecha = `${m[3].length === 2 ? '20' + m[3] : m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+      const key = fecha + '|' + monto.toFixed(2) + '|' + raw; vistos[key] = (vistos[key] || 0) + 1;
+      const pg = raw.match(/SPEI RECIBIDO DE (.*?) DE LA CTA/i), rf = raw.match(/RFC (\S+)/), cc = raw.match(/CONCEPTO (.*)$/);
+      out.push({ fecha, monto, pagador: pg ? pg[1].trim() : '', rfc: rf ? rf[1] : '', concepto: cc ? cc[1] : raw, raw, n: vistos[key] });
+    }
+    if (!out.length) throw new Error('No se encontraron depósitos en el archivo.');
+    let nuevos = 0, exist = 0, sin = 0;
+    for (let i = 0; i < out.length; i += 150) {
+      $('#dxst').innerHTML = `<div class="msg info">Importando ${Math.min(i + 150, out.length)} de ${out.length}…</div>`;
+      const { data, error } = await sb.rpc('ingresos_importar', { p_filas: out.slice(i, i + 150) }); if (error) throw error;
+      nuevos += data.nuevos; exist += data.existentes; sin += data.sin_clasificar;
+    }
+    DX.rows = await ingCargarTodo();
+    DX.ok = `Importación concluida: ${nuevos} depósito${nuevos === 1 ? '' : 's'} nuevo${nuevos === 1 ? '' : 's'}${exist ? `, ${exist} ya registrado${exist === 1 ? '' : 's'}` : ''}${sin ? `; ${sin} sin clasificar` : ''}.`;
+  } catch (e) { DX.err = e.message || String(e); }
+  vDepExcer();
+}
+const ingEstado = r => r.categoria ? 'clas' : (r.enviado_en ? 'env' : 'sin');
+const fdmI = f => f ? f.split('-').reverse().join('/') : '';
+const fdtI = t => t ? fdmI(String(t).slice(0, 10)) : '';
+function ingTabla(rows, sel, conCk, estadoTxt) {
+  const ids = rows.filter(conCk).map(r => r.id), todos = ids.length && ids.every(i => sel.has(i));
+  return `<div class="tw"><table><thead><tr><th>${ids.length ? `<input type="checkbox" id="ick" ${todos ? 'checked' : ''} title="Seleccionar todos">` : ''}</th><th>Fecha</th><th>Pagador</th><th>Concepto</th><th class="n">Monto</th><th>Estado</th></tr></thead><tbody>
+  ${rows.slice(0, 300).map(r => `<tr><td>${conCk(r) ? `<input type="checkbox" class="ick" data-i="${r.id}" ${sel.has(r.id) ? 'checked' : ''}>` : ''}</td><td>${fdmI(r.fecha)}</td><td class="wrap">${esc(r.pagador || '')}</td><td class="wrap">${esc(r.concepto || '')}${r.devuelto_en && !r.enviado_en && !r.categoria ? `<div class="mut" style="font-size:12px">${esc((r.nota || '').split(' | Devuelto: ')[1] ? 'Devuelto: ' + (r.nota || '').split(' | Devuelto: ')[1] : 'Devuelto sin clasificar')}</div>` : ''}</td><td class="n">${money(r.monto)}</td><td>${estadoTxt(r)}</td></tr>`).join('')}
+  </tbody></table></div>${rows.length > 300 ? `<p class="mut" style="font-size:12.5px">Se muestran 300 de ${rows.length}; usar los filtros para acotar.</p>` : ''}`;
+}
+function ingLigaSel(sel, rows, conCk, repinta) {
+  const a = $('#ick'); if (a) a.onchange = () => { rows.filter(conCk).forEach(r => a.checked ? sel.add(r.id) : sel.delete(r.id)); repinta(); };
+  document.querySelectorAll('.ick').forEach(c => c.onchange = () => { c.checked ? sel.add(c.dataset.i) : sel.delete(c.dataset.i); const n = $('#nsel'); if (n) n.textContent = sel.size; });
+}
+const MESES_I = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+const mesesOpcI = (rows, actual) => { const s = [...new Set(rows.map(r => String(r.fecha).slice(0, 7)))].sort().reverse(); return `<select id="imes"><option value="">Todos los meses</option>${s.map(m => `<option value="${m}" ${actual === m ? 'selected' : ''}>${MESES_I[+m.slice(5) - 1]} ${m.slice(0, 4)}</option>`).join('')}</select>`; };
+async function vDepExcer() {
+  if (!DX.rows) {
+    $('#m').innerHTML = '<div class="msg info">Cargando…</div>';
+    try { DX.rows = await ingCargarTodo(); } catch (e) { return $('#m').innerHTML = `<div class="msg err">No fue posible cargar los depósitos: ${esc(e.message || e)}</div>`; }
+  }
+  const cnt = k => DX.rows.filter(r => ingEstado(r) === k).length, q = DX.q.toLowerCase();
+  const rows = DX.rows.filter(r => (DX.vista === 'todos' || ingEstado(r) === DX.vista) && (!DX.mes || String(r.fecha).slice(0, 7) === DX.mes) && (!q || ((r.pagador || '') + ' ' + (r.concepto || '')).toLowerCase().includes(q)));
+  const tot = rows.reduce((s, r) => s + r.monto, 0), conCk = r => ingEstado(r) !== 'clas';
+  for (const i of [...DX.sel]) { const r = DX.rows.find(x => x.id === i); if (!r || !conCk(r)) DX.sel.delete(i); }
+  const chip = (k, t, n) => `<button class="chip ${DX.vista === k ? 'on' : ''}" data-dv="${k}">${t}${n != null ? ` (${n})` : ''}</button>`;
+  $('#m').innerHTML = `<div class="row" style="margin-bottom:10px;justify-content:space-between;flex-wrap:wrap;gap:8px"><div class="mut" style="font-size:13px">Depósitos de la cuenta Excer (Afirme). Lo enviado queda visible para Administración Excering, que solo clasifica los de René, Egbert y Omar.</div>
+    <label class="btn gold" style="cursor:pointer">Importar CSV Excer<input type="file" id="dxf" accept=".csv,text/csv" style="display:none"></label></div>
+  <div id="dxst">${DX.err ? `<div class="msg err">${esc(DX.err)}</div>` : DX.ok ? `<div class="msg ok">${esc(DX.ok)}</div>` : ''}</div>
+  <div class="chips" style="margin-bottom:10px">${chip('sin', 'Sin enviar', cnt('sin'))}${chip('env', 'Enviados a clasificar', cnt('env'))}${chip('clas', 'Clasificados', cnt('clas'))}${chip('todos', 'Todos', null)}</div>
+  <div class="sticky-f">${mesesOpcI(DX.rows, DX.mes)}<input id="iq" placeholder="Buscar pagador o concepto…" value="${esc(DX.q)}"></div>
+  <div class="row" style="margin-bottom:8px;justify-content:space-between;flex-wrap:wrap;gap:8px"><div><b>${rows.length}</b> depósitos · <b class="pos">${money(tot)}</b></div>
+  <div class="row" style="gap:8px">${DX.vista === 'sin' ? '<button class="btn gold" id="ienv">Enviar a clasificar (<span id="nsel">' + DX.sel.size + '</span>)</button>' : DX.vista === 'env' ? '<button class="btn sec" id="iquita">Quitar envío (<span id="nsel">' + DX.sel.size + '</span>)</button>' : ''}</div></div>
+  ${ingTabla(rows, DX.sel, r => conCk(r) && ((DX.vista === 'sin' && ingEstado(r) === 'sin') || (DX.vista === 'env' && ingEstado(r) === 'env')), r => { const e = ingEstado(r); return e === 'clas' ? `<span class="badge b-ok">${esc(r.categoria)}</span>` : e === 'env' ? `<span class="badge b-no">Enviado ${fdtI(r.enviado_en)}</span>` : r.devuelto_en ? '<span class="badge b-no">Devuelto</span>' : '<span class="mut">Sin enviar</span>'; })}`;
+  const conSel = r => (DX.vista === 'sin' && ingEstado(r) === 'sin') || (DX.vista === 'env' && ingEstado(r) === 'env');
+  ingLigaSel(DX.sel, rows, conSel, vDepExcer);
+  document.querySelectorAll('[data-dv]').forEach(b => b.onclick = () => { DX.vista = b.dataset.dv; DX.sel.clear(); DX.ok = ''; DX.err = ''; vDepExcer(); });
+  $('#imes').onchange = e => { DX.mes = e.target.value; vDepExcer(); };
+  $('#iq').oninput = e => { DX.q = e.target.value; clearTimeout(vDepExcer.t); vDepExcer.t = setTimeout(() => { vDepExcer().then(() => { const n = $('#iq'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } }); }, 250); };
+  $('#dxf').onchange = e => { const f = e.target.files[0]; if (f) dxImportar(f); };
+  const mover = async enviar => {
+    const ids = [...DX.sel]; if (!ids.length) { DX.err = 'Se requiere seleccionar al menos un depósito.'; DX.ok = ''; return vDepExcer(); }
+    const { data, error } = await sb.rpc('ingresos_enviar', { p_ids: ids, p_enviar: enviar });
+    if (error) { DX.err = error.message; DX.ok = ''; return vDepExcer(); }
+    DX.err = ''; DX.ok = enviar ? `${data.actualizados} depósito${data.actualizados === 1 ? '' : 's'} enviado${data.actualizados === 1 ? '' : 's'} a clasificar.` : `Envío retirado en ${data.actualizados} depósito${data.actualizados === 1 ? '' : 's'}.`;
+    DX.sel.clear(); DX.rows = await ingCargarTodo(); vDepExcer();
+  };
+  if ($('#ienv')) $('#ienv').onclick = () => mover(true);
+  if ($('#iquita')) $('#iquita').onclick = () => mover(false);
+}
+async function vPorClasificar() {
+  const cargar = async () => { PC.rows = (await ingCargarTodo()).filter(r => !r.categoria || ['RENE', 'EGBERT', 'OMAR'].includes(r.categoria)); };
+  if (!PC.rows) {
+    $('#m').innerHTML = '<div class="msg info">Cargando…</div>';
+    try { await cargar(); } catch (e) { return $('#m').innerHTML = `<div class="msg err">No fue posible cargar los depósitos: ${esc(e.message || e)}</div>`; }
+  }
+  const q = PC.q.toLowerCase(), nPend = PC.rows.filter(r => !r.categoria).length, nCl = PC.rows.length - nPend;
+  const rows = PC.rows.filter(r => (PC.vista === 'pend' ? !r.categoria : !!r.categoria) && (!PC.mes || String(r.fecha).slice(0, 7) === PC.mes) && (!q || ((r.pagador || '') + ' ' + (r.concepto || '')).toLowerCase().includes(q)));
+  const tot = rows.reduce((s, r) => s + r.monto, 0);
+  for (const i of [...PC.sel]) if (!rows.some(x => x.id === i)) PC.sel.delete(i);
+  const chip = (k, t, n) => `<button class="chip ${PC.vista === k ? 'on' : ''}" data-pv2="${k}">${t} (${n})</button>`;
+  $('#m').innerHTML = `<div class="mut" style="font-size:13px;margin-bottom:10px">Depósitos enviados para clasificar. Se asigna cada uno a René, Egbert u Omar; los que no corresponden a ninguno se devuelven.</div>
+  <div id="dxst">${PC.err ? `<div class="msg err">${esc(PC.err)}</div>` : PC.ok ? `<div class="msg ok">${esc(PC.ok)}</div>` : ''}</div>
+  <div class="chips" style="margin-bottom:10px">${chip('pend', 'Por clasificar', nPend)}${chip('clas', 'Clasificados', nCl)}</div>
+  <div class="sticky-f">${mesesOpcI(PC.rows, PC.mes)}<input id="iq" placeholder="Buscar pagador o concepto…" value="${esc(PC.q)}"></div>
+  <div class="row" style="margin-bottom:8px;justify-content:space-between;flex-wrap:wrap;gap:8px"><div><b>${rows.length}</b> depósitos · <b class="pos">${money(tot)}</b> · seleccionados: <b id="nsel">${PC.sel.size}</b></div>
+  <div class="row" style="gap:8px;flex-wrap:wrap">${PC.vista === 'pend' ? '<button class="btn gold" data-ca="RENE">René</button><button class="btn gold" data-ca="EGBERT">Egbert</button><button class="btn gold" data-ca="OMAR">Omar</button><button class="btn sec" id="idev">Devolver</button>' : '<button class="btn sec" id="iquitac">Quitar clasificación</button>'}</div></div>
+  ${ingTabla(rows, PC.sel, () => true, r => r.categoria ? `<span class="badge b-ok">${esc(r.categoria)}</span>` : '<span class="badge b-no">Por clasificar</span>')}`;
+  ingLigaSel(PC.sel, rows, () => true, vPorClasificar);
+  document.querySelectorAll('[data-pv2]').forEach(b => b.onclick = () => { PC.vista = b.dataset.pv2; PC.sel.clear(); PC.ok = ''; PC.err = ''; vPorClasificar(); });
+  $('#imes').onchange = e => { PC.mes = e.target.value; vPorClasificar(); };
+  $('#iq').oninput = e => { PC.q = e.target.value; clearTimeout(vPorClasificar.t); vPorClasificar.t = setTimeout(() => { vPorClasificar().then(() => { const n = $('#iq'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } }); }, 250); };
+  const termina = async (msg, error) => { if (error) { PC.err = error.message; PC.ok = ''; return vPorClasificar(); } PC.err = ''; PC.ok = msg; PC.sel.clear(); try { await cargar(); } catch (e) { PC.err = e.message; } vPorClasificar(); };
+  const ids = () => [...PC.sel];
+  const vacio = () => { if (!PC.sel.size) { PC.err = 'Se requiere seleccionar al menos un depósito.'; PC.ok = ''; vPorClasificar(); return true; } return false; };
+  document.querySelectorAll('[data-ca]').forEach(b => b.onclick = async () => { if (vacio()) return; const n = PC.sel.size; const { error } = await sb.rpc('ingresos_clasificar_asignado', { p_ids: ids(), p_cat: b.dataset.ca }); termina(`${n} depósito${n === 1 ? '' : 's'} clasificado${n === 1 ? '' : 's'} como ${b.dataset.ca}.`, error); });
+  if ($('#idev')) $('#idev').onclick = async () => { if (vacio()) return; const nota = prompt('Motivo de la devolución (opcional):'); if (nota === null) return; const n = PC.sel.size; const { error } = await sb.rpc('ingresos_devolver', { p_ids: ids(), p_nota: nota || null }); termina(`${n} depósito${n === 1 ? '' : 's'} devuelto${n === 1 ? '' : 's'}.`, error); };
+  if ($('#iquitac')) $('#iquitac').onclick = async () => { if (vacio()) return; const n = PC.sel.size; const { error } = await sb.rpc('ingresos_clasificar_asignado', { p_ids: ids(), p_cat: null }); termina(`Clasificación retirada en ${n} depósito${n === 1 ? '' : 's'}.`, error); };
 }
 
 /* ---------- Capturar ---------- */
