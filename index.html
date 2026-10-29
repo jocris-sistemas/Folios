@@ -1015,7 +1015,7 @@ async function ingCargarTodo() {
   for (;;) {
     const { data, error } = await sb.from('ingresos').select(ING_COLS).order('fecha', { ascending: false }).order('id').range(from, from + 999);
     if (error) throw error;
-    all = all.concat(data.map(x => ({ ...x, monto: Number(x.monto) }))); if (data.length < 1000) break; from += 1000;
+    all = all.concat(data.filter(x => x.categoria || x.cuenta === 'Excer Afirme').map(x => ({ ...x, monto: Number(x.monto) }))); if (data.length < 1000) break; from += 1000;   // sin clasificar y de otra cuenta: fuera de listas y totales
   }
   return all;
 }
@@ -1123,8 +1123,10 @@ async function vDepExcer() {
     $('#m').innerHTML = '<div class="msg info">Cargando…</div>';
     try { DX.rows = await ingCargarTodo(); } catch (e) { return $('#m').innerHTML = `<div class="msg err">No fue posible cargar los depósitos: ${esc(e.message || e)}</div>`; }
   }
-  const cnt = k => DX.rows.filter(r => ingEstado(r) === k).length, q = DX.q.toLowerCase();
-  const rows = DX.rows.filter(r => (DX.vista === 'todos' || ingEstado(r) === DX.vista) && (!DX.mes || String(r.fecha).slice(0, 7) === DX.mes) && (!DX.cta || r.cuenta === DX.cta) && (!q || ((r.pagador || '') + ' ' + (r.concepto || '')).toLowerCase().includes(q)));
+  // Sin enviar y Enviados: solo la cuenta Excer Afirme, salvo que se elija otra cuenta en el filtro (los demás depósitos no se alteran).
+  const enCta = (r, v) => DX.cta ? r.cuenta === DX.cta : ((v === 'sin' || v === 'env') ? r.cuenta === 'Excer Afirme' : true);
+  const cnt = k => DX.rows.filter(r => ingEstado(r) === k && enCta(r, k)).length, q = DX.q.toLowerCase();
+  const rows = DX.rows.filter(r => (DX.vista === 'todos' || ingEstado(r) === DX.vista) && (!DX.mes || String(r.fecha).slice(0, 7) === DX.mes) && enCta(r, DX.vista) && (!q || ((r.pagador || '') + ' ' + (r.concepto || '')).toLowerCase().includes(q)));
   const tot = rows.reduce((s, r) => s + r.monto, 0), conSel = r => (DX.vista === 'sin' && ingEstado(r) === 'sin') || (DX.vista === 'env' && ingEstado(r) === 'env') || (DX.vista === 'clas' && ['CANCUN', 'OTROS'].includes(r.categoria));
   for (const i of [...DX.sel]) { const r = DX.rows.find(x => x.id === i); if (!r || !conSel(r)) DX.sel.delete(i); }
   const chip = (k, t, n) => `<button class="chip ${DX.vista === k ? 'on' : ''}" data-dv="${k}">${t}${n != null ? ` (${n})` : ''}</button>`;
