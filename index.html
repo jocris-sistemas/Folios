@@ -666,7 +666,7 @@ function vCancun() {
   const villas = [...new Set(base.map(r => r.villa).filter(Boolean))].sort();
   const meses = MESES.map((m, i) => `<option value="${String(i + 1).padStart(2, '0')}" ${C.mes === String(i + 1).padStart(2, '0') ? 'selected' : ''}>${m}</option>`).join('');
   const rows = base.filter(r => (S.cnVerCanc || !esCanc(r)) && r.pago === C.sub && (!C.tipo || r.tipo === C.tipo) && (!C.mes || (r.fecha || '').slice(5, 7) === C.mes) && (!C.villa || r.villa === C.villa) &&
-    (!C.q || [r.concepto, r.categoria, r.villa, r.folio, r.cargo, r.periodo].join(' ').toLowerCase().includes(C.q.toLowerCase()))).sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')) || (Number(b.folio) || 0) - (Number(a.folio) || 0));
+    (!C.q || [r.concepto, r.categoria, r.villa, r.folio, r.cargo, r.periodo].join(' ').toLowerCase().includes(C.q.toLowerCase()))).sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')) || (parseInt(String(b.folio).replace(/\D/g, ''), 10) || 0) - (parseInt(String(a.folio).replace(/\D/g, ''), 10) || 0));
   const tot = rows.reduce((t, r) => t + (r.pagado === false ? 0 : Number(r.monto || 0)), 0);
   const pendT = rows.reduce((t, r) => t + (r.pagado === false && !esCanc(r) ? Number(r.monto || 0) : 0), 0);
   $('#m').innerHTML = `${S.cnIng ? chipsIng() : panelServicios()}<div class="row" style="margin-bottom:10px"><div class="seg" id="cs">${subs.map(x => `<button data-s="${x[0]}" class="${C.sub === x[0] ? 'on' : ''}">${x[1]} (${base.filter(r => (S.cnVerCanc || !esCanc(r)) && r.pago === x[0] && (!C.tipo || r.tipo === C.tipo)).length})</button>`).join('')}</div></div>
