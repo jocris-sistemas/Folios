@@ -1017,7 +1017,7 @@ async function ingCargarTodo() {
   for (;;) {
     const { data, error } = await sb.from('ingresos').select(ING_COLS).order('fecha', { ascending: false }).order('id').range(from, from + 999);
     if (error) throw error;
-    all = all.concat(data.filter(x => x.categoria || x.cuenta === 'Excer Afirme').map(x => ({ ...x, monto: Number(x.monto) }))); if (data.length < 1000) break; from += 1000;   // sin clasificar y de otra cuenta: fuera de listas y totales
+    all = all.concat(data.filter(x => (x.categoria || x.cuenta === 'Excer Afirme') && !String(x.nota || '').startsWith('DUPLICADO')).map(x => ({ ...x, monto: Number(x.monto) }))); if (data.length < 1000) break; from += 1000;   // sin clasificar y de otra cuenta: fuera de listas y totales
   }
   return all;
 }
@@ -1825,11 +1825,11 @@ async function cargarPagos() {
   P.pagos = all.map(p => ({ ...p, total: Number(p.total) }));
   let d = []; from = 0;
   for (;;) {
-    const { data, error } = await sb.from('ingresos').select('id,fecha,monto,pagador,concepto,categoria').in('categoria', ING_N).order('fecha').range(from, from + 999);
+    const { data, error } = await sb.from('ingresos').select('id,fecha,monto,pagador,concepto,categoria,nota').in('categoria', ING_N).order('fecha').range(from, from + 999);
     if (error) { d = null; break; }
     d = d.concat(data); if (data.length < 1000) break; from += 1000;
   }
-  P.dep = d && d.length ? d.map(x => ({ ...x, monto: Number(x.monto), cargo_id: CARGO_ID[x.categoria] })).filter(x => x.cargo_id) : null;
+  P.dep = d && d.length ? d.filter(x => !String(x.nota || '').startsWith('DUPLICADO')).map(x => ({ ...x, monto: Number(x.monto), cargo_id: CARGO_ID[x.categoria] })).filter(x => x.cargo_id) : null;
   P.cargado = true;
 }
 const ligadoPor = () => { const m = {}; P.pagos.forEach(p => { if (p.deposito_id) m[p.deposito_id] = (m[p.deposito_id] || 0) + c100(p.total); }); return m; };
