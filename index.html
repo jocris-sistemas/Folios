@@ -167,7 +167,15 @@ async function cargarExtra() {
     const ac = await tAc; if (ac) S.acum = ac;
     S.hoja = {}; const h = await tHoja; ((h && h.data) || []).forEach(x => { S.hoja[x.semana] = x; });
   }
-  if (tCn) await tCn;
+  if (tCn) {
+    /* Cancún carga en segundo plano: la primera pantalla no espera esos datos */
+    const n0 = (S.cancun || []).length;
+    tCn.then(() => {
+      if (!S.perfil || document.hidden || ((S.cancun || []).length === n0 && n0)) return;
+      const ae = document.activeElement; if ((ae && /INPUT|SELECT|TEXTAREA/.test(ae.tagName)) || document.getElementById('dlg')) return;
+      if (!n0 || ['cancun', 'acumulado', 'ingresos'].includes(S.tab) || S.padre) { const y = window.scrollY; shell(); window.scrollTo(0, y); }
+    }).catch(() => { });
+  }
 }
 async function cargaCancun() {
   try {
