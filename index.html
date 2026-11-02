@@ -326,7 +326,8 @@ function bajarPDF(nombre, titulo, sub, cols, filas, pie, tam) {
 }
 const fCorta = iso => iso ? iso.slice(8, 10) + '/' + iso.slice(5, 7) : '';
 const chTxt = a => (a || []).map(c => 'Cheque ' + c.numero + ' · ' + c.chequera).join(', ');
-const pagoTxtFp = p => !p ? '' : p.medio === 'CHEQUE' ? (p.cheques ? chTxt(p.cheques) : p.ref_medio || 'Cheque') : p.medio === 'EFECTIVO' ? 'Efectivo · semana ' + fCorta(p.semana_efectivo) : p.medio === 'SIN ASIGNAR' ? 'Sin asignar' : p.medio;
+const nSem = iso => { const d = new Date(iso + 'T12:00:00Z'), w = d.getUTCDay() || 7; d.setUTCDate(d.getUTCDate() + 4 - w); const y0 = Date.UTC(d.getUTCFullYear(), 0, 1); return Math.ceil(((d - y0) / 86400000 + 1) / 7); };
+const pagoTxtFp = p => !p ? '' : p.medio === 'CHEQUE' ? (p.cheques ? chTxt(p.cheques) : p.ref_medio || 'Cheque') : p.medio === 'EFECTIVO' ? 'Efectivo · semana ' + nSem(p.semana_efectivo) : p.medio === 'SIN ASIGNAR' ? 'Sin asignar' : p.medio;
 const pagoBadgeFp = (p, sg) => !p ? '' : p.medio === 'SIN ASIGNAR'
   ? `<span class="badge b-no">Sin asignar</span>${sg && sg[0] ? ` <span class="badge b-bad" title="Sugerencia por monto y fecha; confirmar en el detalle del folio">Sugerido: ${esc(sg[0].referencia)}</span>` : ''}`
   : `<span class="badge b-ok" title="${esc(p.medio === 'EFECTIVO' && p.monto_efectivo != null ? 'Pagado en efectivo: ' + money(p.monto_efectivo) : p.ref_medio || '')}">${esc(pagoTxtFp(p))}</span>${p.conflicto ? ' <span class="badge b-bad" title="El folio aparece en un cheque y también en efectivo">Cheque y efectivo</span>' : ''}`;
@@ -342,7 +343,7 @@ const pagoDetalleHTML = r => {
   }
   if (p.cheques && p.cheques.length) h += p.cheques.map(c => `<div style="margin:4px 0"><span class="badge b-ok">Cheque ${esc(c.numero)} · ${esc(c.chequera)}</span>${c.fecha ? ' <span class="mut">' + fFecha(c.fecha) + '</span>' : ''}</div>`).join('');
   else if (p.medio === 'CHEQUE') h += `<div style="margin:4px 0"><span class="badge b-ok">${esc(p.ref_medio || 'Cheque')}</span></div>`;
-  if (p.semana_efectivo) h += `<div class="row" style="justify-content:space-between;margin:4px 0"><span><span class="badge b-ok">Efectivo · semana del ${fFecha(p.semana_efectivo)}</span>${p.monto_efectivo != null ? ' <span class="mut">' + money(p.monto_efectivo) + '</span>' : ''}</span></div>`;
+  if (p.semana_efectivo) h += `<div class="row" style="justify-content:space-between;margin:4px 0"><span><span class="badge b-ok" title="Semana del viernes ${fFecha(p.semana_efectivo)}">Efectivo · semana ${nSem(p.semana_efectivo)}</span>${p.monto_efectivo != null ? ' <span class="mut">' + money(p.monto_efectivo) + '</span>' : ''}</span></div>`;
   if (p.conflicto) h += '<div class="msg err">El folio aparece en un cheque y también en efectivo; conviene revisarlo.</div>';
   return h;
 };
