@@ -133,7 +133,7 @@ async function cargar() {
     sb.from('cargos_unidad').select('cargo_id,unidad').then(r => r, () => ({})),
     sb.from('cargos').select('id,nombre,activo,solo_caja,responsable').order('id'),
     sol ? null : sb.from('chequeras').select('id,nombre,activa').eq('activa', true).order('nombre').then(r => r, () => ({})),
-    pagina(() => sb.from('platon_movimientos').select('id,unidad,cargo_id,tipo,folio,fecha,concepto,categoria,monto,origen,lote,nota,sin_factura,pct_extra,total_pagar,revisado_en,creado_por,creado_en,medio_pago,vencimiento,nombre,datos_bancarios,periodo,chequera_id,numero_cheque,hoja_id,datos_completos,grupo_id').eq('activo', true).order('fecha').order('id'), true, 2),
+    pagina(() => sb.from('platon_movimientos').select('acum_oculto,id,unidad,cargo_id,tipo,folio,fecha,concepto,categoria,monto,origen,lote,nota,sin_factura,pct_extra,total_pagar,revisado_en,creado_por,creado_en,medio_pago,vencimiento,nombre,datos_bancarios,periodo,chequera_id,numero_cheque,hoja_id,datos_completos,grupo_id').eq('activo', true).order('fecha').order('id'), true, 2),
     sol ? null : pagina(() => sb.from('platon_cruce').select('cargo_id,folio,cheques').not('cheques', 'is', null)),
     sol ? null : pagina(() => sb.from('platon_medio').select('mov_id,medio,referencia')),
     sol ? null : pagina(() => sb.from('folio_pago').select('origen_app,clave,medio,cheques,semana_efectivo,monto_efectivo,ref_medio,conflicto')).catch(() => null),
@@ -892,7 +892,7 @@ function vAcumulado() {
   const porCargo = {}; deSem.forEach(x => { const c = porCargo[x.r.cargo_id] = porCargo[x.r.cargo_id] || { n: 0, t: 0 }; c.n++; c.t += Number(x.a.monto); });
   const totSem = deSem.reduce((t, x) => t + Number(x.a.monto), 0);
   if (!A.desde) A.desde = sumaDias(A.semana, -90);
-  const pend = S.rows.filter(r => r.tipo === 'EGRESO' && !enAcum.has(r.id) && r.fecha >= A.desde && (!A.cargo || r.cargo_id === A.cargo) &&
+  const pend = S.rows.filter(r => r.tipo === 'EGRESO' && !r.acum_oculto && !enAcum.has(r.id) && r.fecha >= A.desde && (!A.cargo || r.cargo_id === A.cargo) &&
     (!A.q || (r.concepto + ' ' + r.folio).toLowerCase().includes(A.q.toLowerCase()))).sort((x, y) => y.fecha.localeCompare(x.fecha) || x.cargo_id - y.cargo_id || x.folio - y.folio);
   const tope = pend.slice(0, 300);
   const cargosAll = [...new Set(S.rows.filter(r => r.tipo === 'EGRESO').map(r => r.cargo_id))].sort((a, b) => (CARGOS[a] || '').localeCompare(CARGOS[b] || ''));
